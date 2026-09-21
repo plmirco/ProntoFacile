@@ -64,6 +64,21 @@ def trova_operatore_match(testo_cella):
             return MAPPA_MEMBRI[p]
     return None
 
+def classifica_turno_orario(orario_str):
+    """
+    Determina se il servizio è MATTINA o POMERIGGIO in base all'orario di inizio:
+    - Mattina/Notte: dalle 22 alle 8
+    - Pomeriggio: dalle 12 alle 21
+    """
+    m = re.search(r'(\d{1,2})[:\.]?(\d{2})?', orario_str)
+    if m:
+        ora = int(m.group(1))
+        if ora >= 22 or ora <= 8:
+            return "MATTINA"
+        elif 12 <= ora <= 21:
+            return "POMERIGGIO"
+    return "MATTINA" # Default se non viene specificato l'orario
+
 def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
     global _CACHE_ODS
     if not _CACHE_ODS:
@@ -80,7 +95,7 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
     df_giorno = _CACHE_ODS[foglio_target]
     matrice_giorno = df_giorno.to_numpy()
 
-    # Determinazione Turno dalla Cella B2
+    # Determinazione Squadre Montanti dalla Cella B2
     indicatore_b2 = ""
     if matrice_giorno.shape[0] > 0 and matrice_giorno.shape[1] > 1:
         indicatore_b2 = pulisci_stringa(matrice_giorno[0, 1])
@@ -94,7 +109,9 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
 
     assenti = set()
     servizi_speciali_assegnati = []
-    operatori_impegnati_speciali = set()
+    
+    op_impegnati_mattina = set()
+    op_impegnati_pomeriggio = set()
     
     num_righe, num_colonne = matrice_giorno.shape
 
@@ -115,17 +132,15 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
         cel_servizio = pulisci_stringa(matrice_giorno[r, 7]) if num_colonne > 7 else ""
         cel_orario = pulisci_stringa(matrice_giorno[r, 8]) if num_colonne > 8 else ""
 
-        # Se troviamo un nuovo servizio in Colonna H, lo aggiorniamo
         if cel_servizio and cel_servizio != "NAN" and "SERVIZIO" not in cel_servizio:
             servizio_attuale = cel_servizio
             if cel_orario and cel_orario != "NAN":
                 orario_attuale = cel_orario
         
-        # Se c'è un servizio attivo, leggiamo la squadra (Colonna J e eventuali sostituti K, L, M)
         if servizio_attuale:
             operatore_effettivo = None
             
-            # Cerca da destra verso sinistra (M -> L -> K -> J) per dare priorità al SOSTITUTO
+            # Cerca da M a J per dare priorità al SOSTITUTO
             for col_idx in [12, 11, 10, 9]:
                 if num_colonne > col_idx:
                     val_op = pulisci_stringa(matrice_giorno[r, col_idx])
@@ -133,22 +148,26 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
                         match = trova_operatore_match(val_op)
                         if match:
                             operatore_effettivo = match
-                            break # Trovato l'operatore effettivo (sostituto o titolare)
+                            break
 
             if operatore_effettivo:
-                turno_op = "MATTINA" if operatore_effettivo in squadra_mattina else "POMERIGGIO"
+                # Classificazione rigida basata esclusivamente sull'orario d'inizio
+                turno_op = classifica_turno_orario(orario_attuale)
                 servizi_speciali_assegnati.append((operatore_effettivo, servizio_attuale, orario_attuale, turno_op))
-                operatori_impegnati_speciali.add(operatore_effettivo)
+                
+                if turno_op == "MATTINA":
+                    op_impegnati_mattina.add(operatore_effettivo)
+                else:
+                    op_impegnati_pomeriggio.add(operatore_effettivo)
             else:
-                # Se la riga è completamente vuota nelle colonne J-M, il servizio a squadra è finito
                 if not any(pulisci_stringa(matrice_giorno[r, c]) not in ["", "NAN"] for c in range(9, min(13, num_colonne))):
-                    if not cel_servizio: # Reset solo se non siamo sulla riga del prossimo servizio
+                    if not cel_servizio:
                         servizio_attuale = ""
                         orario_attuale = ""
 
-    # Calcolo disponibilità nette
-    disp_mattina = [op for op in squadra_mattina if op not in assenti and op not in OPERATORI_ESCLUSI_SEMPRE and op not in operatori_impegnati_speciali]
-    disp_pomeriggio = [op for op in squadra_pomeriggio if op not in assenti and op not in OPERATORI_ESCLUSI_SEMPRE and op not in operatori_impegnati_speciali]
+    # Calcolo disponibilità nette per turno
+    disp_mattina = [op for op in squadra_mattina if op not in assenti and op not in OPERATORI_ESCLUSI_SEMPRE and op not in op_impegnati_mattina]
+    disp_pomeriggio = [op for op in squadra_pomeriggio if op not in assenti and op not in OPERATORI_ESCLUSI_SEMPRE and op not in op_impegnati_pomeriggio]
 
     spec_m = [item for item in servizi_speciali_assegnati if item[3] == "MATTINA"]
     spec_p = [item for item in servizi_speciali_assegnati if item[3] == "POMERIGGIO"]
