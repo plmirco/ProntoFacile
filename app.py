@@ -19,38 +19,6 @@ if 'orari_df' not in st.session_state:
 if 'coppie_df' not in st.session_state:
     st.session_state.coppie_df = pd.DataFrame()
 
-# Sidebar: Gestione e Download Stadera
-with st.sidebar:
-    st.header("📊 Gestione Stadera")
-    if st.button("🔄 Azzera Storico Stadera"):
-        st.session_state.totali_df = pd.DataFrame(columns=['Totale_PI'])
-        st.session_state.orari_df = pd.DataFrame()
-        st.session_state.coppie_df = pd.DataFrame()
-        st.success("Storico Stadera azzerato!")
-
-    st.markdown("---")
-    st.subheader("📈 Contatori Attuali P.I.")
-    if not st.session_state.totali_df.empty:
-        st.dataframe(st.session_state.totali_df.sort_values(by="Totale_PI", ascending=False), use_container_width=True)
-        
-        buffer_stadera = io.BytesIO()
-        with pd.ExcelWriter(buffer_stadera, engine='openpyxl') as writer:
-            st.session_state.totali_df.to_excel(writer, sheet_name="Totali_PI")
-            if not st.session_state.orari_df.empty:
-                st.session_state.orari_df.to_excel(writer, sheet_name="Fasce_Orarie")
-            if not st.session_state.coppie_df.empty:
-                st.session_state.coppie_df.to_excel(writer, sheet_name="Matrice_Coppie")
-        
-        st.download_button(
-            label="📥 SCARICA REPORT STADERA (EXCEL)",
-            data=buffer_stadera.getvalue(),
-            file_name="Report_Stadera_Contatori.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
-        )
-    else:
-        st.caption("Nessun dato registrato nella Stadera.")
-
 uploaded_file = st.file_uploader("1. Carica il file .ods del mese", type=["ods"])
 
 if uploaded_file is not None:
@@ -113,7 +81,7 @@ if uploaded_file is not None:
 
                     with col_m:
                         st.success("### ☀️ MATTINA")
-                        st.markdown("#### 🚨 Pronto Intervento (PI)")
+                        st.markdown("#### 🚨 Pronto Intervento (PI - Mattina)")
                         if ris["MATTINA_PI"]:
                             for ops, orario in ris["MATTINA_PI"]:
                                 st.write(f"⏱️ **{orario}** — 👤 " + " & 👤 ".join(ops))
@@ -121,21 +89,21 @@ if uploaded_file is not None:
                         else:
                             st.caption("Nessun PI assegnato.")
                         
-                        st.markdown("#### 🚓 Servizio Ordinario")
+                        st.markdown("#### 🚓 Servizio Ordinario (Mattina)")
                         if ris["MATTINA_ORD"]:
                             for ops, note in ris["MATTINA_ORD"]:
                                 st.write(f"🔹 **{note}** — 👤 " + " & 👤 ".join(ops))
                                 righe_export.append({"Giorno": g, "Giorno_Settimana": giorno_nome, "Turno": "MATTINA", "Tipo": "Ordinario", "Orario/Note": note, "Operatori": " & ".join(ops)})
 
                         if spec_m:
-                            st.markdown("#### 👤 Servizi Singoli / Incarichi Speciali")
+                            st.markdown("#### 👤 Servizi Singoli (Mattina)")
                             for op in spec_m:
                                 st.write(f"🔸 **Servizio Singolo** — 👤 {op}")
                                 righe_export.append({"Giorno": g, "Giorno_Settimana": giorno_nome, "Turno": "MATTINA", "Tipo": "Servizio Singolo", "Orario/Note": "Singolo", "Operatori": op})
 
                     with col_p:
                         st.info("### 🌙 POMERIGGIO")
-                        st.markdown("#### 🚨 Pronto Intervento (PI)")
+                        st.markdown("#### 🚨 Pronto Intervento (PI - Pomeriggio)")
                         if ris["POMERIGGIO_PI"]:
                             for ops, orario in ris["POMERIGGIO_PI"]:
                                 st.write(f"⏱️ **{orario}** — 👤 " + " & 👤 ".join(ops))
@@ -143,33 +111,32 @@ if uploaded_file is not None:
                         else:
                             st.caption("Nessun PI assegnato.")
                         
-                        st.markdown("#### 🚓 Servizio Ordinario")
+                        st.markdown("#### 🚓 Servizio Ordinario (Pomeriggio)")
                         if ris["POMERIGGIO_ORD"]:
                             for ops, note in ris["POMERIGGIO_ORD"]:
                                 st.write(f"🔹 **{note}** — 👤 " + " & 👤 ".join(ops))
                                 righe_export.append({"Giorno": g, "Giorno_Settimana": giorno_nome, "Turno": "POMERIGGIO", "Tipo": "Ordinario", "Orario/Note": note, "Operatori": " & ".join(ops)})
 
                         if spec_p:
-                            st.markdown("#### 👤 Servizi Singoli / Incarichi Speciali")
+                            st.markdown("#### 👤 Servizi Singoli (Pomeriggio)")
                             for op in spec_p:
                                 st.write(f"🔸 **Servizio Singolo** — 👤 {op}")
                                 righe_export.append({"Giorno": g, "Giorno_Settimana": giorno_nome, "Turno": "POMERIGGIO", "Tipo": "Servizio Singolo", "Orario/Note": "Singolo", "Operatori": op})
 
                     if assenti_giorno:
-                        st.warning(f"🚫 **Operatori Assenti / Non Disponibili nel Giorno {g}:** " + ", ".join(assenti_giorno))
+                        st.warning(f"🚫 **Operatori Assenti nel Giorno {g}:** " + ", ".join(assenti_giorno))
                         for op_ass in assenti_giorno:
                             righe_export.append({"Giorno": g, "Giorno_Settimana": giorno_nome, "Turno": "NON DISPONIBILE", "Tipo": "Assente", "Orario/Note": "Assente", "Operatori": op_ass})
 
                     st.divider()
 
-                # Generazione file Excel Tabellone Turni
                 if righe_export:
                     df_export = pd.DataFrame(righe_export)
                     buffer_turni = io.BytesIO()
                     with pd.ExcelWriter(buffer_turni, engine='openpyxl') as writer:
                         df_export.to_excel(writer, index=False, sheet_name="Tabellone_Turni")
                     
-                    st.success("✅ Tabellone calcolato e Stadera aggiornata correttamente!")
+                    st.success("✅ Calcolo completato!")
                     st.download_button(
                         label=f"📥 SCARICA EXCEL TABELLONE (DAL {giorni_selezionati[0]} AL {giorni_selezionati[-1]})",
                         data=buffer_turni.getvalue(),
@@ -182,3 +149,36 @@ if uploaded_file is not None:
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
+
+# Rendering Sidebar PERMANENTE (Posizionata in fondo per riflettere sempre i dati aggiornati)
+with st.sidebar:
+    st.header("📊 Gestione Stadera")
+    if st.button("🔄 Azzera Storico Stadera"):
+        st.session_state.totali_df = pd.DataFrame(columns=['Totale_PI'])
+        st.session_state.orari_df = pd.DataFrame()
+        st.session_state.coppie_df = pd.DataFrame()
+        st.rerun()
+
+    st.markdown("---")
+    st.subheader("📈 Contatori Attuali P.I.")
+    
+    if not st.session_state.totali_df.empty:
+        st.dataframe(st.session_state.totali_df.sort_values(by="Totale_PI", ascending=False), use_container_width=True)
+        
+        buffer_stadera = io.BytesIO()
+        with pd.ExcelWriter(buffer_stadera, engine='openpyxl') as writer:
+            st.session_state.totali_df.to_excel(writer, sheet_name="Totali_PI")
+            if not st.session_state.orari_df.empty:
+                st.session_state.orari_df.to_excel(writer, sheet_name="Fasce_Orarie")
+            if not st.session_state.coppie_df.empty:
+                st.session_state.coppie_df.to_excel(writer, sheet_name="Matrice_Coppie")
+        
+        st.download_button(
+            label="📥 SCARICA REPORT STADERA",
+            data=buffer_stadera.getvalue(),
+            file_name="Report_Stadera_Contatori.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
+    else:
+        st.info("Nessun servizio P.I. ancora registrato nella Stadera.")
