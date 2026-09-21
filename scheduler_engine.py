@@ -10,7 +10,6 @@ from config_rules import (
 )
 
 def calcola_punteggio_coppia(op1, op2, orario, totali_df, orari_df, coppie_df):
-    """Calcola il punteggio della coppia per bilanciare la Stadera."""
     punteggio = 0
     tot1 = totali_df.loc[op1, 'Totale_PI'] if op1 in totali_df.index else 0
     tot2 = totali_df.loc[op2, 'Totale_PI'] if op2 in totali_df.index else 0
@@ -27,17 +26,13 @@ def calcola_punteggio_coppia(op1, op2, orario, totali_df, orari_df, coppie_df):
 
     return punteggio
 
-
 def aggiorna_stadera(coppie_pi, totali_df, orari_df, coppie_df):
-    """Aggiorna i contatori della Stadera in modo sicuro per Pandas in Python 3.14."""
     for ops, orario in coppie_pi:
         for op in ops:
-            # 1. Totali PI
             if op not in totali_df.index:
                 totali_df.loc[op, 'Totale_PI'] = 0
             totali_df.loc[op, 'Totale_PI'] += 1
 
-            # 2. Fasce Orarie
             if orario not in orari_df.columns:
                 orari_df[orario] = 0
             if op not in orari_df.index:
@@ -46,10 +41,8 @@ def aggiorna_stadera(coppie_pi, totali_df, orari_df, coppie_df):
             val_orario = orari_df.loc[op, orario]
             orari_df.loc[op, orario] = (0 if pd.isna(val_orario) else val_orario) + 1
 
-        # 3. Matrice Coppie (Inizializzazione preventiva delle colonne e delle righe)
         if len(ops) >= 2:
             op1, op2 = ops[0], ops[1]
-            
             for o in [op1, op2]:
                 if o not in coppie_df.columns:
                     coppie_df[o] = 0
@@ -58,16 +51,14 @@ def aggiorna_stadera(coppie_pi, totali_df, orari_df, coppie_df):
 
             val_c1 = coppie_df.loc[op1, op2]
             val_c2 = coppie_df.loc[op2, op1]
-            
             coppie_df.loc[op1, op2] = (0 if pd.isna(val_c1) else val_c1) + 1
             coppie_df.loc[op2, op1] = (0 if pd.isna(val_c2) else val_c2) + 1
 
-
 def genera_turni_giorno(op_mattina, op_pomeriggio, giorno_nome, totali_df, orari_df, coppie_df):
-    """Genera i turni di PI e completa il tabellone con i servizi ordinari."""
     anomalie = []
 
-    def seleziona_e_completa(disponibili, orari, nome_turno):
+    def elabora_squadra_turno(disponibili, orari, nome_turno):
+        # Filtra vincoli singoli operatore
         idonei = [op for op in disponibili if op not in OPERATORI_ESCLUSI_SEMPRE and verifica_vincoli_operatore(op, giorno_nome, nome_turno)]
         
         if len(idonei) < 2:
@@ -77,30 +68,25 @@ def genera_turni_giorno(op_mattina, op_pomeriggio, giorno_nome, totali_df, orari
         idonei_rimasti = list(idonei)
         coppie_pi = []
 
-        # --- STEP 1: ASSEGNAZIONE FANTAZZINI (ORARIO ROTATIVO) ---
+        # 1. FANTAZZINI PRESENTE NEL SUO TURNO
         if "FANTAZZINI" in idonei_rimasti:
             idonei_rimasti.remove("FANTAZZINI")
-            
             candidati = [cand for cand in idonei_rimasti if verifica_coppia_valida("FANTAZZINI", cand)]
             if candidati:
-                # Sceglie il compagno meno frequente
                 candidati.sort(key=lambda x: coppie_df.loc["FANTAZZINI", x] if ("FANTAZZINI" in coppie_df.index and x in coppie_df.columns) else 0)
                 compagno = candidati[0]
                 idonei_rimasti.remove(compagno)
 
-                # Sceglie l'orario meno frequentato da Fantazzini
                 orario_scelto = sorted(orari_disponibili, key=lambda o: orari_df.loc["FANTAZZINI", o] if ("FANTAZZINI" in orari_df.index and o in orari_df.columns) else 0)[0]
                 orari_disponibili.remove(orario_scelto)
-
                 coppie_pi.append((("FANTAZZINI", compagno), orario_scelto))
 
-        # --- STEP 2: COMPLETAMENTO ALTRE COPPIE PRONTO INTERVENTO ---
-        num_coppie_pi_rimaste = min(len(orari_disponibili), len(idonei_rimasti) // 2)
+        # 2. ALTRE COPPIE PI
+        num_coppie_pi = min(len(orari_disponibili), len(idonei_rimasti) // 2)
 
-        if num_coppie_pi_rimaste > 0:
+        if num_coppie_pi > 0:
             idonei_rimasti.sort(key=lambda x: totali_df.loc[x, 'Totale_PI'] if x in totali_df.index else 0)
-            selezionati = idonei_rimasti[:num_coppie_pi_rimaste * 2]
-            
+            selezionati = idonei_rimasti[:num_coppie_pi * 2]
             for op in selezionati:
                 idonei_rimasti.remove(op)
 
@@ -112,7 +98,6 @@ def genera_turni_giorno(op_mattina, op_pomeriggio, giorno_nome, totali_df, orari
                 random.shuffle(temp)
                 valida = True
                 coppie_temp = []
-                
                 for i in range(0, len(temp), 2):
                     op1, op2 = temp[i], temp[i+1]
                     if not verifica_coppia_valida(op1, op2):
@@ -131,12 +116,10 @@ def genera_turni_giorno(op_mattina, op_pomeriggio, giorno_nome, totali_df, orari
             if miglior_gruppo:
                 coppie_pi.extend(miglior_gruppo)
 
-        # --- STEP 3: SERVIZIO ORDINARIO PER GLI OPERATORI RIMANENTI ---
+        # 3. RESTANTE PERSONALE PER SERVIZIO ORDINARIO (COPPIE O TERZETTO)
         coppie_ordinario = []
         if idonei_rimasti:
             random.shuffle(idonei_rimasti)
-            
-            # Se sono dispari, genera 1 pattuglia da 3 e i restanti a coppie
             if len(idonei_rimasti) % 2 != 0 and len(idonei_rimasti) >= 3:
                 terzetto = (idonei_rimasti.pop(0), idonei_rimasti.pop(0), idonei_rimasti.pop(0))
                 coppie_ordinario.append((terzetto, "Pattuglia da 3"))
@@ -147,13 +130,12 @@ def genera_turni_giorno(op_mattina, op_pomeriggio, giorno_nome, totali_df, orari
                 else:
                     coppie_ordinario.append(((idonei_rimasti[i],), "Singolo Ordinario"))
 
-        # Aggiornamento automatico Stadera
         aggiorna_stadera(coppie_pi, totali_df, orari_df, coppie_df)
 
         return coppie_pi, coppie_ordinario
 
-    pi_m, ord_m = seleziona_e_completa(op_mattina, ORARI_MATTINA, "MATTINA")
-    pi_p, ord_p = seleziona_e_completa(op_pomeriggio, ORARI_POMERIGGIO, "POMERIGGIO")
+    pi_m, ord_m = elabora_squadra_turno(op_mattina, ORARI_MATTINA, "MATTINA")
+    pi_p, ord_p = elabora_squadra_turno(op_pomeriggio, ORARI_POMERIGGIO, "POMERIGGIO")
 
     return {
         "MATTINA_PI": pi_m,
