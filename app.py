@@ -1,184 +1,139 @@
-# app.py
-import streamlit as st
+# ods_reader.py
 import pandas as pd
-import tempfile
-import os
-import io
-from ods_reader import estrai_dati_giorno, carica_anagrafica_turni, _CACHE_ODS
-from scheduler_engine import genera_turni_giorno
+import re
+from config_rules import OPERATORI_ESCLUSI_SEMPRE
 
-st.set_page_config(page_title="Gestione Turni P.I.", page_icon="🚓", layout="wide")
+_CACHE_ODS = {}
 
-st.title("🚓 Gestione Turni Pronto Intervento & Tabellone")
+# ANAGRAFICA UFFICIALE E RIGIDA DAI DATI INCOLLATI
+GRUPPO_A_REALE = [
+    "ANGELINI L.", "ARMAROLI", "ATTI", "BELLUZZI", "BINI", "BONZI", "BRUSA", 
+    "BUTTAZZI", "CATANZARO", "COCCODA", "DEL VECCHIO", "FARNETI", "FORZANO", 
+    "GIULIANO", "GRONDONA", "LEONI L.", "MEI", "MOLINI", "PARADISO", "ROPA", 
+    "SABATINO", "SIMONI MIRCO", "TARTARI", "ZAVARELLA"
+]
 
-# Inizializzazione dello stato della sessione per la Stadera
-if 'totali_df' not in st.session_state:
-    st.session_state.totali_df = pd.DataFrame(columns=['Totale_PI'])
-if 'orari_df' not in st.session_state:
-    st.session_state.orari_df = pd.DataFrame()
-if 'coppie_df' not in st.session_state:
-    st.session_state.coppie_df = pd.DataFrame()
+GRUPPO_B_REALE = [
+    "BARTOLI G.", "BONAVENTURA", "CACI", "CANTORE", "CASONI", "CUMERO", 
+    "D'AMBRA", "D'AMORE", "FANTAZZINI G.", "FIORINI", "GAGLIANO", "GALLIERA", 
+    "GRAZIA M.", "MAIOLINO", "MANTEGNA", "MAVIGLIA", "MAZZINI", "PELUSI", 
+    "PINCIO", "PROVENZANO", "SASSU B.", "SCHETTINO", "VACCARO", "VISANI"
+]
 
-uploaded_file = st.file_uploader("1. Carica il file .ods del mese", type=["ods"])
+def estrai_cognome_base(nome_completo):
+    """Estrae la prima parola significativa (es. 'GRAZIA M.' -> 'GRAZIA')"""
+    pulisci = re.sub(r'[^A-Z\s]', '', nome_completo.upper().strip())
+    parti = pulisci.split()
+    return parti[0] if parti else ""
 
-if uploaded_file is not None:
-    if 'ods_bytes' not in st.session_state or st.session_state.get('file_name') != uploaded_file.name:
-        st.session_state.ods_bytes = uploaded_file.getvalue()
-        st.session_state.file_name = uploaded_file.name
+# Mappa delle radici per il confronto flessibile
+MAPPA_MEMBERI = {}
+for op in GRUPPO_A_REALE:
+    base = estrai_cognome_base(op)
+    if base:
+        MAPPA_MEMBERI[base] = op
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".ods") as tmp_file:
-        tmp_file.write(st.session_state.ods_bytes)
-        tmp_path = tmp_file.name
+for op in GRUPPO_B_REALE:
+    base = estrai_cognome_base(op)
+    if base:
+        MAPPA_MEMBERI[base] = op
 
-    try:
-        _CACHE_ODS.clear()
-        xl = pd.read_excel(tmp_path, sheet_name=None, engine='odf')
-        fogli_disponibili = [str(sheet).strip() for sheet in xl.keys() if str(sheet).strip().lower() != 'dati']
-        fogli_numerici = [f for f in fogli_disponibili if f.isdigit()]
-        
-        st.subheader("2. Imposta l'Intervallo dei Giorni")
+def inizializza_cache_ods(percorso_ods):
+    global _CACHE_ODS
+    _CACHE_ODS.clear()
+    _CACHE_ODS = pd.read_excel(percorso_ods, sheet_name=None, engine='odf')
 
-        if fogli_numerici:
-            fogli_ordinati = sorted([int(f) for f in fogli_numerici])
-            min_g, max_g = fogli_ordinati[0], fogli_ordinati[-1]
+def pulisci_stringa(valore):
+    if pd.isna(valore):
+        return ""
+    return str(valore).strip().upper()
 
-            inizio, fine = st.slider(
-                "Seleziona il periodo (Da giorno ... A giorno):",
-                min_value=min_g,
-                max_value=max_g,
-                value=(5 if min_g <= 5 <= max_g else min_g, 10 if min_g <= 10 <= max_g else min_g + 5)
-            )
+def carica_anagrafica_turni(percorso_ods=None):
+    """Ritorna direttamente le due liste dell'Anagrafica blindata."""
+    return list(GRUPPO_A_REALE), list(GRUPPO_B_REALE)
 
-            giorni_selezionati = [str(g) for g in range(inizio, fine + 1) if str(g) in fogli_disponibili]
-            st.info(f"📅 Giorni selezionati ({len(giorni_selezionati)} giorni): **dal {inizio} al {fine}**")
-        else:
-            giorni_selezionati = st.multiselect("Seleziona i fogli da elaborare:", options=fogli_disponibili, default=fogli_disponibili)
-
-        st.markdown("---")
-        
-        if st.button("🚀 CALCOLA TABELLONE GIORNALIERO", type="primary", use_container_width=True):
-            if not giorni_selezionati:
-                st.error("Nessun giorno valido selezionato!")
-            else:
-                nomi_settimana = ["LUNEDÌ", "MARTEDÌ", "MERCOLEDÌ", "GIOVEDÌ", "VENERDÌ", "SABATO", "DOMENICA"]
-                righe_export = []
-
-                for idx, g in enumerate(giorni_selezionati):
-                    giorno_nome = nomi_settimana[idx % len(nomi_settimana)]
-                    
-                    disp_m, disp_p, spec_m, spec_p, assenti_giorno = estrai_dati_giorno(tmp_path, g)
-                    
-                    ris, anomalie = genera_turni_giorno(
-                        disp_m, disp_p, giorno_nome, 
-                        st.session_state.totali_df, 
-                        st.session_state.orari_df, 
-                        st.session_state.coppie_df
-                    )
-
-                    st.markdown(f"## 📌 GIORNO {g} — {giorno_nome}")
-                    
-                    col_m, col_p = st.columns(2)
-
-                    with col_m:
-                        st.success("### ☀️ MATTINA")
-                        st.markdown("#### 🚨 Pronto Intervento (PI - Mattina)")
-                        if ris["MATTINA_PI"]:
-                            for ops, orario in ris["MATTINA_PI"]:
-                                st.write(f"⏱️ **{orario}** — 👤 " + " & 👤 ".join(ops))
-                                righe_export.append({"Giorno": g, "Giorno_Settimana": giorno_nome, "Turno": "MATTINA", "Tipo": "PI", "Orario/Note": orario, "Operatori": " & ".join(ops)})
-                        else:
-                            st.caption("Nessun PI assegnato.")
-                        
-                        st.markdown("#### 🚓 Servizio Ordinario (Mattina)")
-                        if ris["MATTINA_ORD"]:
-                            for ops, note in ris["MATTINA_ORD"]:
-                                st.write(f"🔹 **{note}** — 👤 " + " & 👤 ".join(ops))
-                                righe_export.append({"Giorno": g, "Giorno_Settimana": giorno_nome, "Turno": "MATTINA", "Tipo": "Ordinario", "Orario/Note": note, "Operatori": " & ".join(ops)})
-
-                        if spec_m:
-                            st.markdown("#### 👤 Servizi Singoli (Mattina)")
-                            for op in spec_m:
-                                st.write(f"🔸 **Servizio Singolo** — 👤 {op}")
-                                righe_export.append({"Giorno": g, "Giorno_Settimana": giorno_nome, "Turno": "MATTINA", "Tipo": "Servizio Singolo", "Orario/Note": "Singolo", "Operatori": op})
-
-                    with col_p:
-                        st.info("### 🌙 POMERIGGIO")
-                        st.markdown("#### 🚨 Pronto Intervento (PI - Pomeriggio)")
-                        if ris["POMERIGGIO_PI"]:
-                            for ops, orario in ris["POMERIGGIO_PI"]:
-                                st.write(f"⏱️ **{orario}** — 👤 " + " & 👤 ".join(ops))
-                                righe_export.append({"Giorno": g, "Giorno_Settimana": giorno_nome, "Turno": "POMERIGGIO", "Tipo": "PI", "Orario/Note": orario, "Operatori": " & ".join(ops)})
-                        else:
-                            st.caption("Nessun PI assegnato.")
-                        
-                        st.markdown("#### 🚓 Servizio Ordinario (Pomeriggio)")
-                        if ris["POMERIGGIO_ORD"]:
-                            for ops, note in ris["POMERIGGIO_ORD"]:
-                                st.write(f"🔹 **{note}** — 👤 " + " & 👤 ".join(ops))
-                                righe_export.append({"Giorno": g, "Giorno_Settimana": giorno_nome, "Turno": "POMERIGGIO", "Tipo": "Ordinario", "Orario/Note": note, "Operatori": " & ".join(ops)})
-
-                        if spec_p:
-                            st.markdown("#### 👤 Servizi Singoli (Pomeriggio)")
-                            for op in spec_p:
-                                st.write(f"🔸 **Servizio Singolo** — 👤 {op}")
-                                righe_export.append({"Giorno": g, "Giorno_Settimana": giorno_nome, "Turno": "POMERIGGIO", "Tipo": "Servizio Singolo", "Orario/Note": "Singolo", "Operatori": op})
-
-                    if assenti_giorno:
-                        st.warning(f"🚫 **Operatori Assenti nel Giorno {g}:** " + ", ".join(assenti_giorno))
-                        for op_ass in assenti_giorno:
-                            righe_export.append({"Giorno": g, "Giorno_Settimana": giorno_nome, "Turno": "NON DISPONIBILE", "Tipo": "Assente", "Orario/Note": "Assente", "Operatori": op_ass})
-
-                    st.divider()
-
-                if righe_export:
-                    df_export = pd.DataFrame(righe_export)
-                    buffer_turni = io.BytesIO()
-                    with pd.ExcelWriter(buffer_turni, engine='openpyxl') as writer:
-                        df_export.to_excel(writer, index=False, sheet_name="Tabellone_Turni")
-                    
-                    st.success("✅ Calcolo completato!")
-                    st.download_button(
-                        label=f"📥 SCARICA EXCEL TABELLONE (DAL {giorni_selezionati[0]} AL {giorni_selezionati[-1]})",
-                        data=buffer_turni.getvalue(),
-                        file_name=f"Tabellone_Turni_{giorni_selezionati[0]}_al_{giorni_selezionati[-1]}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        type="primary",
-                        use_container_width=True
-                    )
-
-    finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
-
-# Rendering Sidebar PERMANENTE (Posizionata in fondo per riflettere sempre i dati aggiornati)
-with st.sidebar:
-    st.header("📊 Gestione Stadera")
-    if st.button("🔄 Azzera Storico Stadera"):
-        st.session_state.totali_df = pd.DataFrame(columns=['Totale_PI'])
-        st.session_state.orari_df = pd.DataFrame()
-        st.session_state.coppie_df = pd.DataFrame()
-        st.rerun()
-
-    st.markdown("---")
-    st.subheader("📈 Contatori Attuali P.I.")
+def trova_operatore_match(testo_cella):
+    """Riconosce l'operatore anche se scritto solo come cognome o con varianti."""
+    if not testo_cella:
+        return None
+    testo_pulito = re.sub(r'[^A-Z\s]', '', testo_cella.upper())
+    parole = testo_pulito.split()
     
-    if not st.session_state.totali_df.empty:
-        st.dataframe(st.session_state.totali_df.sort_values(by="Totale_PI", ascending=False), use_container_width=True)
-        
-        buffer_stadera = io.BytesIO()
-        with pd.ExcelWriter(buffer_stadera, engine='openpyxl') as writer:
-            st.session_state.totali_df.to_excel(writer, sheet_name="Totali_PI")
-            if not st.session_state.orari_df.empty:
-                st.session_state.orari_df.to_excel(writer, sheet_name="Fasce_Orarie")
-            if not st.session_state.coppie_df.empty:
-                st.session_state.coppie_df.to_excel(writer, sheet_name="Matrice_Coppie")
-        
-        st.download_button(
-            label="📥 SCARICA REPORT STADERA",
-            data=buffer_stadera.getvalue(),
-            file_name="Report_Stadera_Contatori.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
-        )
+    for p in parole:
+        if len(p) >= 3 and p in MAPPA_MEMBERI:
+            return MAPPA_MEMBERI[p]
+    return None
+
+def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
+    global _CACHE_ODS
+    if not _CACHE_ODS:
+        inizializza_cache_ods(percorso_ods)
+
+    turno_a, turno_b = carica_anagrafica_turni()
+
+    target_str = pulisci_stringa(nome_foglio_giorno)
+    foglio_target = next((s for s in _CACHE_ODS.keys() if pulisci_stringa(s) == target_str), None)
+    
+    if not foglio_target:
+        return [], [], [], [], []
+
+    df_giorno = _CACHE_ODS[foglio_target]
+    matrice_giorno = df_giorno.to_numpy()
+
+    # Determinazione Turno dalla Cella B2
+    indicatore_b2 = ""
+    if matrice_giorno.shape[0] > 0 and matrice_giorno.shape[1] > 1:
+        indicatore_b2 = pulisci_stringa(matrice_giorno[0, 1])
+
+    if "TURNO B" in indicatore_b2 or "TURNO:B" in indicatore_b2 or indicatore_b2 == "B":
+        squadra_mattina = list(turno_b)
+        squadra_pomeriggio = list(turno_a)
     else:
-        st.info("Nessun servizio P.I. ancora registrato nella Stadera.")
+        squadra_mattina = list(turno_a)
+        squadra_pomeriggio = list(turno_b)
+
+    assenti = set()
+    servizi_speciali_assegnati = []
+    operatori_impegnati_speciali = set()
+    
+    num_righe, num_colonne = matrice_giorno.shape
+
+    # 1. Scansione Servizi Particolari (Colonne H-M)
+    for r in range(num_righe):
+        servizio = pulisci_stringa(matrice_giorno[r, 7]) if num_colonne > 7 else ""
+        orario = pulisci_stringa(matrice_giorno[r, 8]) if num_colonne > 8 else ""
+
+        if servizio and servizio != "NAN" and "SERVIZIO" not in servizio:
+            operatore_effettivo = None
+            for col_idx in [12, 11, 10, 9]:
+                if num_colonne > col_idx:
+                    val_op = pulisci_stringa(matrice_giorno[r, col_idx])
+                    if val_op and val_op != "NAN":
+                        match = trova_operatore_match(val_op)
+                        if match:
+                            operatore_effettivo = match
+                            break
+                    if operatore_effettivo:
+                        break
+
+            if operatore_effettivo:
+                turno_op = "MATTINA" if operatore_effettivo in squadra_mattina else "POMERIGGIO"
+                servizi_speciali_assegnati.append((operatore_effettivo, servizio, orario, turno_op))
+                operatori_impegnati_speciali.add(operatore_effettivo)
+
+    # 2. Rilevazione ASSENTI in Colonna B
+    for r in range(num_righe):
+        if num_colonne > 1:
+            cel_b = pulisci_stringa(matrice_giorno[r, 1])
+            if cel_b and cel_b != "NAN":
+                match = trova_operatore_match(cel_b)
+                if match:
+                    assenti.add(match)
+
+    disp_mattina = [op for op in squadra_mattina if op not in assenti and op not in OPERATORI_ESCLUSI_SEMPRE and op not in operatori_impegnati_speciali]
+    disp_pomeriggio = [op for op in squadra_pomeriggio if op not in assenti and op not in OPERATORI_ESCLUSI_SEMPRE and op not in operatori_impegnati_speciali]
+
+    spec_m = [item for item in servizi_speciali_assegnati if item[3] == "MATTINA"]
+    spec_p = [item for item in servizi_speciali_assegnati if item[3] == "POMERIGGIO"]
+
+    return disp_mattina, disp_pomeriggio, spec_m, spec_p, sorted(list(assenti))
