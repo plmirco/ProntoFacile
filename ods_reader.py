@@ -1,7 +1,11 @@
 # ods_reader.py
 import pandas as pd
 import re
-from config_rules import OPERATORI_ESCLUSI_SEMPRE
+
+try:
+    from config_rules import OPERATORI_ESCLUSI_SEMPRE
+except ImportError:
+    OPERATORI_ESCLUSI_SEMPRE = []
 
 _CACHE_ODS = {}
 
@@ -130,5 +134,7 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
 
     spec_m = [item for item in servizi_speciali_assegnati if item[3] == "MATTINA"]
     spec_p = [item for item in servizi_speciali_assegnati if item[3] == "POMERIGGIO"]
+
+    return disp_mattina, disp_pomeriggio, spec_m, spec_p, sorted(list(assenti))
 
     return disp_mattina, disp_pomeriggio, spec_m, spec_p, sorted(list(assenti))
