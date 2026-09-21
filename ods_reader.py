@@ -4,10 +4,13 @@ from config_rules import OPERATORI_ESCLUSI_SEMPRE
 
 _CACHE_ODS = {}
 
-# Parole chiave tassative per escludere totalmente chi è assente
 MOTIVI_ASSENZA_TASSATIVA = [
     "MALATTIA", "MAL", "FERIE", "PERMESSO", "RECUPERO", "REC.C", "REC. C", 
     "ASPETTATIVA", "CONGEDO", "LEGGE 104", "104", "INFORTUNIO"
+]
+
+OPERATORI_SINGOLI_SPECIALI = [
+    "PALMIERI", "CALÒ", "CALO", "FLORIDIA", "MINGHETTI", "TREVISANI"
 ]
 
 def inizializza_cache_ods(percorso_ods):
@@ -66,10 +69,6 @@ def carica_anagrafica_turni(percorso_ods):
     return turno_a, turno_b
 
 def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
-    """
-    Estrae i presenti reali per il giorno specificato (1-31).
-    Separa RIGIDAMENTE Mattina e Pomeriggio ed elimina gli assenti.
-    """
     global _CACHE_ODS
     if not _CACHE_ODS:
         inizializza_cache_ods(percorso_ods)
@@ -80,12 +79,11 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
     foglio_target = next((s for s in _CACHE_ODS.keys() if pulisci_stringa(s) == target_str), None)
     
     if not foglio_target:
-        return [], []
+        return [], [], [], [], []
 
     df_giorno = _CACHE_ODS[foglio_target]
     matrice_giorno = df_giorno.to_numpy()
 
-    # Lettura cella B2 per capire se la mattina è A o B
     indicatore_b2 = ""
     if matrice_giorno.shape[0] > 0 and matrice_giorno.shape[1] > 1:
         indicatore_b2 = pulisci_stringa(matrice_giorno[0, 1])
@@ -97,7 +95,7 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
         squadra_mattina = list(turno_a)
         squadra_pomeriggio = list(turno_b)
 
-    assenti_assoluti = set()
+    assenti = set()
     tutti_ops = set(turno_a + turno_b)
 
     num_righe, num_colonne = matrice_giorno.shape
@@ -105,14 +103,15 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
         for c in range(num_colonne):
             cel_upper = pulisci_stringa(matrice_giorno[r, c])
             if cel_upper and cel_upper != "NAN":
-                # Se la cella contiene un motivo di assenza reale
                 if any(motivo in cel_upper for motivo in MOTIVI_ASSENZA_TASSATIVA):
                     for op in tutti_ops:
                         if op in cel_upper:
-                            assenti_assoluti.add(op)
+                            assenti.add(op)
 
-    # Filtra i presenti escludendo tassativamente gli assenti e gli esclusi sempre (Angelini, Sassu)
-    disp_mattina = [op for op in squadra_mattina if op not in assenti_assoluti and op not in OPERATORI_ESCLUSI_SEMPRE]
-    disp_pomeriggio = [op for op in squadra_pomeriggio if op not in assenti_assoluti and op not in OPERATORI_ESCLUSI_SEMPRE]
+    speciali_mattina = [op for op in squadra_mattina if op in OPERATORI_SINGOLI_SPECIALI and op not in assenti]
+    speciali_pomeriggio = [op for op in squadra_pomeriggio if op in OPERATORI_SINGOLI_SPECIALI and op not in assenti]
 
-    return disp_mattina, disp_pomeriggio
+    disp_mattina = [op for op in squadra_mattina if op not in assenti and op not in OPERATORI_ESCLUSI_SEMPRE and op not in OPERATORI_SINGOLI_SPECIALI]
+    disp_pomeriggio = [op for op in squadra_pomeriggio if op not in assenti and op not in OPERATORI_ESCLUSI_SEMPRE and op not in OPERATORI_SINGOLI_SPECIALI]
+
+    return disp_mattina, disp_pomeriggio, speciali_mattina, speciali_pomeriggio, sorted(list(assenti))
