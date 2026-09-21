@@ -4,9 +4,11 @@ from config_rules import OPERATORI_ESCLUSI_SEMPRE
 
 _CACHE_ODS = {}
 
+# Elenco completo delle causali di assenza nel foglio
 MOTIVI_ASSENZA_TASSATIVA = [
-    "MALATTIA", "MAL", "FERIE", "PERMESSO", "RECUPERO", "REC.C", "REC. C", 
-    "ASPETTATIVA", "CONGEDO", "LEGGE 104", "104", "INFORTUNIO"
+    "MALATTIA", "MAL", "FERIE", "FER", "P.FERIE", "PERMESSO", "PERM", 
+    "RECUPERO", "REC.C", "REC. C", "REC", "ASPETTATIVA", "CONGEDO", "CONG", 
+    "LEGGE 104", "104", "INFORTUNIO", "RIPOSO", "RIP"
 ]
 
 OPERATORI_SINGOLI_SPECIALI = [
@@ -58,13 +60,20 @@ def carica_anagrafica_turni(percorso_ods):
                         break
 
             if gruppo is not None:
+                # Cerca di estrarre la parola del cognome principale
                 parti = cel_str.split()
                 cognome = parti[0] if len(parti) > 0 else cel_str
 
-                if gruppo == "A" and cognome not in turno_a:
-                    turno_a.append(cognome)
-                elif gruppo == "B" and cognome not in turno_b:
-                    turno_b.append(cognome)
+                if gruppo == "A":
+                    if cognome not in turno_a:
+                        turno_a.append(cognome)
+                    if "FANTAZZINI" in cel_str and "FANTAZZINI" not in turno_a:
+                        turno_a.append("FANTAZZINI")
+                elif gruppo == "B":
+                    if cognome not in turno_b:
+                        turno_b.append(cognome)
+                    if "FANTAZZINI" in cel_str and "FANTAZZINI" not in turno_b:
+                        turno_b.append("FANTAZZINI")
 
     return turno_a, turno_b
 
@@ -103,6 +112,7 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
         for c in range(num_colonne):
             cel_upper = pulisci_stringa(matrice_giorno[r, c])
             if cel_upper and cel_upper != "NAN":
+                # Se la cella contiene un motivo di assenza
                 if any(motivo in cel_upper for motivo in MOTIVI_ASSENZA_TASSATIVA):
                     for op in tutti_ops:
                         if op in cel_upper:
