@@ -11,7 +11,6 @@ st.set_page_config(page_title="Gestione Pronto Intervento & Tabellone", page_ico
 
 st.title("🚓 Gestione Turni PI e Tabellone Giornaliero")
 
-# Inizializzazione dello stato di sessione per la Stadera
 if 'totali_df' not in st.session_state:
     st.session_state.totali_df = pd.DataFrame(columns=['Totale_PI'])
 if 'orari_df' not in st.session_state:
@@ -19,7 +18,7 @@ if 'orari_df' not in st.session_state:
 if 'coppie_df' not in st.session_state:
     st.session_state.coppie_df = pd.DataFrame()
 
-# Sidebar: Gestione e Visualizzazione Stadera
+# Sidebar: Controllo Stadera
 with st.sidebar:
     st.header("📊 Gestione Stadera")
     
@@ -27,14 +26,13 @@ with st.sidebar:
         st.session_state.totali_df = pd.DataFrame(columns=['Totale_PI'])
         st.session_state.orari_df = pd.DataFrame()
         st.session_state.coppie_df = pd.DataFrame()
-        st.success("Storico Stadera azzerato con successo!")
+        st.success("Storico Stadera azzerato!")
 
     st.markdown("---")
     st.subheader("📈 Contatori Attuali")
     if not st.session_state.totali_df.empty:
         st.dataframe(st.session_state.totali_df.sort_values(by="Totale_PI", ascending=False), use_container_width=True)
         
-        # Download Stadera in Excel
         buffer_stadera = io.BytesIO()
         with pd.ExcelWriter(buffer_stadera, engine='openpyxl') as writer:
             st.session_state.totali_df.to_excel(writer, sheet_name="Totali_PI")
@@ -50,7 +48,7 @@ with st.sidebar:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
     else:
-        st.caption("Nessun dato registrato nella Stadera. Esegui la prima elaborazione.")
+        st.caption("Nessun dato registrato nella Stadera.")
 
 uploaded_file = st.file_uploader("1. Carica il file .ods della settimana", type=["ods"])
 
@@ -82,8 +80,6 @@ if uploaded_file is not None:
                 st.error("Seleziona almeno un giorno dal menu sopra!")
             else:
                 nomi_settimana = ["LUNEDÌ", "MARTEDÌ", "MERCOLEDÌ", "GIOVEDÌ", "VENERDÌ", "SABATO", "DOMENICA"]
-                
-                # Lista per la creazione dell'Excel finale dei turni
                 righe_export = []
 
                 for idx, g in enumerate(giorni_selezionati):
@@ -115,7 +111,7 @@ if uploaded_file is not None:
                         else:
                             st.caption("Nessun servizio PI assegnato.")
                         
-                        st.markdown("#### 🚓 Servizio Ordinario")
+                        st.markdown("#### 调度 Servizio Ordinario")
                         if ris["MATTINA_ORD"]:
                             for ops, note in ris["MATTINA_ORD"]:
                                 st.write(f"🔹 **{note}** — 👤 " + " & 👤 ".join(ops))
@@ -139,7 +135,7 @@ if uploaded_file is not None:
 
                     st.divider()
 
-                # Generazione file Excel da scaricare
+                # Generazione file Excel finale
                 if righe_export:
                     df_export = pd.DataFrame(righe_export)
                     buffer_turni = io.BytesIO()
@@ -148,11 +144,12 @@ if uploaded_file is not None:
                     
                     st.success("✅ Tabellone calcolato e Stadera aggiornata!")
                     st.download_button(
-                        label="📥 Scarica Tabellone Turni Completo (Excel)",
+                        label="📥 SCARICA TABELLONE TURNI COMPLETO (EXCEL)",
                         data=buffer_turni.getvalue(),
                         file_name="Tabellone_Turni_PI.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        type="primary"
+                        type="primary",
+                        use_container_width=True
                     )
 
     finally:
