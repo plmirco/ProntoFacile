@@ -27,6 +27,7 @@ def calcola_punteggio_coppia(op1, op2, orario, totali_df, orari_df, coppie_df):
     return punteggio
 
 def aggiorna_stadera(coppie_pi, totali_df, orari_df, coppie_df):
+    """Incrementa i contatori dei servizi PI effettuati."""
     for ops, orario in coppie_pi:
         for op in ops:
             if op not in totali_df.index:
@@ -56,10 +57,10 @@ def aggiorna_stadera(coppie_pi, totali_df, orari_df, coppie_df):
 
 def genera_turni_giorno(op_mattina, op_pomeriggio, giorno_nome, totali_df, orari_df, coppie_df):
     anomalie = []
+    operatori_gia_assegnati = set()
 
     def elabora_squadra_turno(disponibili, orari, nome_turno):
-        # Filtra vincoli singoli operatore
-        idonei = [op for op in disponibili if op not in OPERATORI_ESCLUSI_SEMPRE and verifica_vincoli_operatore(op, giorno_nome, nome_turno)]
+        idonei = [op for op in disponibili if op not in OPERATORI_ESCLUSI_SEMPRE and op not in operatori_gia_assegnati and verifica_vincoli_operatore(op, giorno_nome, nome_turno)]
         
         if len(idonei) < 2:
             return [], []
@@ -68,7 +69,6 @@ def genera_turni_giorno(op_mattina, op_pomeriggio, giorno_nome, totali_df, orari
         idonei_rimasti = list(idonei)
         coppie_pi = []
 
-        # 1. FANTAZZINI PRESENTE NEL SUO TURNO
         if "FANTAZZINI" in idonei_rimasti:
             idonei_rimasti.remove("FANTAZZINI")
             candidati = [cand for cand in idonei_rimasti if verifica_coppia_valida("FANTAZZINI", cand)]
@@ -77,11 +77,14 @@ def genera_turni_giorno(op_mattina, op_pomeriggio, giorno_nome, totali_df, orari
                 compagno = candidati[0]
                 idonei_rimasti.remove(compagno)
 
-                orario_scelto = sorted(orari_disponibili, key=lambda o: orari_df.loc["FANTAZZINI", o] if ("FANTAZZINI" in orari_df.index and o in orari_df.columns) else 0)[0]
+                orari_ordinati = sorted(orari_disponibili, key=lambda o: orari_df.loc["FANTAZZINI", o] if ("FANTAZZINI" in orari_df.index and o in orari_df.columns) else 0)
+                orario_scelto = random.choice(orari_ordinati[:2]) if len(orari_ordinati) >= 2 else orari_ordinati[0]
                 orari_disponibili.remove(orario_scelto)
-                coppie_pi.append((("FANTAZZINI", compagno), orario_scelto))
 
-        # 2. ALTRE COPPIE PI
+                coppie_pi.append((("FANTAZZINI", compagno), orario_scelto))
+                operatori_gia_assegnati.add("FANTAZZINI")
+                operatori_gia_assegnati.add(compagno)
+
         num_coppie_pi = min(len(orari_disponibili), len(idonei_rimasti) // 2)
 
         if num_coppie_pi > 0:
@@ -115,20 +118,27 @@ def genera_turni_giorno(op_mattina, op_pomeriggio, giorno_nome, totali_df, orari
 
             if miglior_gruppo:
                 coppie_pi.extend(miglior_gruppo)
+                for (op1, op2), _ in miglior_gruppo:
+                    operatori_gia_assegnati.add(op1)
+                    operatori_gia_assegnati.add(op2)
 
-        # 3. RESTANTE PERSONALE PER SERVIZIO ORDINARIO (COPPIE O TERZETTO)
         coppie_ordinario = []
         if idonei_rimasti:
             random.shuffle(idonei_rimasti)
             if len(idonei_rimasti) % 2 != 0 and len(idonei_rimasti) >= 3:
                 terzetto = (idonei_rimasti.pop(0), idonei_rimasti.pop(0), idonei_rimasti.pop(0))
                 coppie_ordinario.append((terzetto, "Pattuglia da 3"))
+                for op in terzetto:
+                    operatori_gia_assegnati.add(op)
             
             for i in range(0, len(idonei_rimasti), 2):
                 if i + 1 < len(idonei_rimasti):
                     coppie_ordinario.append(((idonei_rimasti[i], idonei_rimasti[i+1]), "Coppia Ordinario"))
+                    operatori_gia_assegnati.add(idonei_rimasti[i])
+                    operatori_gia_assegnati.add(idonei_rimasti[i+1])
                 else:
                     coppie_ordinario.append(((idonei_rimasti[i],), "Singolo Ordinario"))
+                    operatori_gia_assegnati.add(idonei_rimasti[i])
 
         aggiorna_stadera(coppie_pi, totali_df, orari_df, coppie_df)
 
