@@ -1,19 +1,40 @@
 # ods_reader.py
 import pandas as pd
+import re
 from config_rules import OPERATORI_ESCLUSI_SEMPRE
 
 _CACHE_ODS = {}
 
-# Elenco completo delle causali di assenza nel foglio
-MOTIVI_ASSENZA_TASSATIVA = [
-    "MALATTIA", "MAL", "FERIE", "FER", "P.FERIE", "PERMESSO", "PERM", 
-    "RECUPERO", "REC.C", "REC. C", "REC", "ASPETTATIVA", "CONGEDO", "CONG", 
-    "LEGGE 104", "104", "INFORTUNIO", "RIPOSO", "RIP"
+# ANAGRAFICA UFFICIALE RIGIDA
+GRUPPO_A_REALE = [
+    "ANGELINI L.", "ARMAROLI", "ATTI", "BELLUZZI", "BINI", "BONZI", "BRUSA", 
+    "BUTTAZZI", "CATANZARO", "COCCODA", "DEL VECCHIO", "FARNETI", "FORZANO", 
+    "GIULIANO", "GRONDONA", "LEONI L.", "MEI", "MOLINI", "PARADISO", "ROPA", 
+    "SABATINO", "SIMONI MIRCO", "TARTARI", "ZAVARELLA"
 ]
 
-OPERATORI_SINGOLI_SPECIALI = [
-    "PALMIERI", "CALÒ", "CALO", "FLORIDIA", "MINGHETTI", "TREVISANI"
+GRUPPO_B_REALE = [
+    "BARTOLI G.", "BONAVENTURA", "CACI", "CANTORE", "CASONI", "CUMERO", 
+    "D'AMBRA", "D'AMORE", "FANTAZZINI G.", "FIORINI", "GAGLIANO", "GALLIERA", 
+    "GRAZIA M.", "MAIOLINO", "MANTEGNA", "MAVIGLIA", "MAZZINI", "PELUSI", 
+    "PINCIO", "PROVENZANO", "SASSU B.", "SCHETTINO", "VACCARO", "VISANI"
 ]
+
+def estrai_cognome_base(nome_completo):
+    pulisci = re.sub(r'[^A-Z\s]', '', nome_completo.upper().strip())
+    parti = pulisci.split()
+    return parti[0] if parti else ""
+
+MAPPA_MEMBRI = {}
+for op in GRUPPO_A_REALE:
+    base = estrai_cognome_base(op)
+    if base:
+        MAPPA_MEMBRI[base] = op
+
+for op in GRUPPO_B_REALE:
+    base = estrai_cognome_base(op)
+    if base:
+        MAPPA_MEMBRI[base] = op
 
 def inizializza_cache_ods(percorso_ods):
     global _CACHE_ODS
@@ -25,64 +46,26 @@ def pulisci_stringa(valore):
         return ""
     return str(valore).strip().upper()
 
-def carica_anagrafica_turni(percorso_ods):
-    global _CACHE_ODS
-    if not _CACHE_ODS:
-        inizializza_cache_ods(percorso_ods)
+def carica_anagrafica_turni(percorso_ods=None):
+    return list(GRUPPO_A_REALE), list(GRUPPO_B_REALE)
 
-    nome_foglio_dati = next((s for s in _CACHE_ODS.keys() if pulisci_stringa(s).lower() == 'dati'), None)
-    if not nome_foglio_dati:
-        return [], []
-
-    df_dati = _CACHE_ODS[nome_foglio_dati]
-    matrice = df_dati.to_numpy()
+def trova_operatore_match(testo_cella):
+    if not testo_cella:
+        return None
+    testo_pulito = re.sub(r'[^A-Z\s]', '', testo_cella.upper())
+    parole = testo_pulito.split()
     
-    turno_a, turno_b = [], []
-    num_righe, num_colonne = matrice.shape
-
-    for riga in range(num_righe):
-        for col in range(num_colonne):
-            cel_str = pulisci_stringa(matrice[riga, col])
-
-            if not cel_str or cel_str == "NAN" or "TURNO" in cel_str or "NOME" in cel_str:
-                continue
-
-            if any(escluso in cel_str for escluso in OPERATORI_ESCLUSI_SEMPRE):
-                continue
-
-            gruppo = None
-            for offset in [1, -1, 2, -2]:
-                c_adj = col + offset
-                if 0 <= c_adj < num_colonne:
-                    str_g = pulisci_stringa(matrice[riga, c_adj])
-                    if str_g in ["A", "B"]:
-                        gruppo = str_g
-                        break
-
-            if gruppo is not None:
-                # Cerca di estrarre la parola del cognome principale
-                parti = cel_str.split()
-                cognome = parti[0] if len(parti) > 0 else cel_str
-
-                if gruppo == "A":
-                    if cognome not in turno_a:
-                        turno_a.append(cognome)
-                    if "FANTAZZINI" in cel_str and "FANTAZZINI" not in turno_a:
-                        turno_a.append("FANTAZZINI")
-                elif gruppo == "B":
-                    if cognome not in turno_b:
-                        turno_b.append(cognome)
-                    if "FANTAZZINI" in cel_str and "FANTAZZINI" not in turno_b:
-                        turno_b.append("FANTAZZINI")
-
-    return turno_a, turno_b
+    for p in parole:
+        if len(p) >= 3 and p in MAPPA_MEMBRI:
+            return MAPPA_MEMBRI[p]
+    return None
 
 def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
     global _CACHE_ODS
     if not _CACHE_ODS:
         inizializza_cache_ods(percorso_ods)
 
-    turno_a, turno_b = carica_anagrafica_turni(percorso_ods)
+    turno_a, turno_b = carica_anagrafica_turni()
 
     target_str = pulisci_stringa(nome_foglio_giorno)
     foglio_target = next((s for s in _CACHE_ODS.keys() if pulisci_stringa(s) == target_str), None)
@@ -105,23 +88,47 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
         squadra_pomeriggio = list(turno_b)
 
     assenti = set()
-    tutti_ops = set(turno_a + turno_b)
-
+    servizi_speciali_assegnati = []
+    operatori_impegnati_speciali = set()
+    
     num_righe, num_colonne = matrice_giorno.shape
+
+    # 1. Scansione Servizi Particolari (Colonne H-M)
     for r in range(num_righe):
-        for c in range(num_colonne):
-            cel_upper = pulisci_stringa(matrice_giorno[r, c])
-            if cel_upper and cel_upper != "NAN":
-                # Se la cella contiene un motivo di assenza
-                if any(motivo in cel_upper for motivo in MOTIVI_ASSENZA_TASSATIVA):
-                    for op in tutti_ops:
-                        if op in cel_upper:
-                            assenti.add(op)
+        servizio = pulisci_stringa(matrice_giorno[r, 7]) if num_colonne > 7 else ""
+        orario = pulisci_stringa(matrice_giorno[r, 8]) if num_colonne > 8 else ""
 
-    speciali_mattina = [op for op in squadra_mattina if op in OPERATORI_SINGOLI_SPECIALI and op not in assenti]
-    speciali_pomeriggio = [op for op in squadra_pomeriggio if op in OPERATORI_SINGOLI_SPECIALI and op not in assenti]
+        if servizio and servizio != "NAN" and "SERVIZIO" not in servizio:
+            operatore_effettivo = None
+            for col_idx in [12, 11, 10, 9]:
+                if num_colonne > col_idx:
+                    val_op = pulisci_stringa(matrice_giorno[r, col_idx])
+                    if val_op and val_op != "NAN":
+                        match = trova_operatore_match(val_op)
+                        if match:
+                            operatore_effettivo = match
+                            break
+                    if operatore_effettivo:
+                        break
 
-    disp_mattina = [op for op in squadra_mattina if op not in assenti and op not in OPERATORI_ESCLUSI_SEMPRE and op not in OPERATORI_SINGOLI_SPECIALI]
-    disp_pomeriggio = [op for op in squadra_pomeriggio if op not in assenti and op not in OPERATORI_ESCLUSI_SEMPRE and op not in OPERATORI_SINGOLI_SPECIALI]
+            if operatore_effettivo:
+                turno_op = "MATTINA" if operatore_effettivo in squadra_mattina else "POMERIGGIO"
+                servizi_speciali_assegnati.append((operatore_effettivo, servizio, orario, turno_op))
+                operatori_impegnati_speciali.add(operatore_effettivo)
 
-    return disp_mattina, disp_pomeriggio, speciali_mattina, speciali_pomeriggio, sorted(list(assenti))
+    # 2. Rilevazione ASSENTI in Colonna B
+    for r in range(num_righe):
+        if num_colonne > 1:
+            cel_b = pulisci_stringa(matrice_giorno[r, 1])
+            if cel_b and cel_b != "NAN":
+                match = trova_operatore_match(cel_b)
+                if match:
+                    assenti.add(match)
+
+    disp_mattina = [op for op in squadra_mattina if op not in assenti and op not in OPERATORI_ESCLUSI_SEMPRE and op not in operatori_impegnati_speciali]
+    disp_pomeriggio = [op for op in squadra_pomeriggio if op not in assenti and op not in OPERATORI_ESCLUSI_SEMPRE and op not in operatori_impegnati_speciali]
+
+    spec_m = [item for item in servizi_speciali_assegnati if item[3] == "MATTINA"]
+    spec_p = [item for item in servizi_speciali_assegnati if item[3] == "POMERIGGIO"]
+
+    return disp_mattina, disp_pomeriggio, spec_m, spec_p, sorted(list(assenti))
