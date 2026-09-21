@@ -1,139 +1,96 @@
-# ods_reader.py
-import pandas as pd
-import re
-from config_rules import OPERATORI_ESCLUSI_SEMPRE
+# app.py
+import streamlit as st
+import os
+import tempfile
+from ods_reader import estrai_dati_giorno, carica_anagrafica_turni
 
-_CACHE_ODS = {}
+st.set_page_config(
+    page_title="Gestione Turni e Servizi",
+    page_icon="📋",
+    layout="wide"
+)
 
-# ANAGRAFICA UFFICIALE E RIGIDA DAI DATI INCOLLATI
-GRUPPO_A_REALE = [
-    "ANGELINI L.", "ARMAROLI", "ATTI", "BELLUZZI", "BINI", "BONZI", "BRUSA", 
-    "BUTTAZZI", "CATANZARO", "COCCODA", "DEL VECCHIO", "FARNETI", "FORZANO", 
-    "GIULIANO", "GRONDONA", "LEONI L.", "MEI", "MOLINI", "PARADISO", "ROPA", 
-    "SABATINO", "SIMONI MIRCO", "TARTARI", "ZAVARELLA"
-]
+st.title("📋 Gestione Turni, Assenze e Servizi")
+st.markdown("---")
 
-GRUPPO_B_REALE = [
-    "BARTOLI G.", "BONAVENTURA", "CACI", "CANTORE", "CASONI", "CUMERO", 
-    "D'AMBRA", "D'AMORE", "FANTAZZINI G.", "FIORINI", "GAGLIANO", "GALLIERA", 
-    "GRAZIA M.", "MAIOLINO", "MANTEGNA", "MAVIGLIA", "MAZZINI", "PELUSI", 
-    "PINCIO", "PROVENZANO", "SASSU B.", "SCHETTINO", "VACCARO", "VISANI"
-]
+# Sidebar per il caricamento file e la selezione giorno
+st.sidebar.header("📁 Caricamento Dati")
+file_ods = st.sidebar.file_uploader("Carica il file .ods dei turni", type=["ods"])
 
-def estrai_cognome_base(nome_completo):
-    """Estrae la prima parola significativa (es. 'GRAZIA M.' -> 'GRAZIA')"""
-    pulisci = re.sub(r'[^A-Z\s]', '', nome_completo.upper().strip())
-    parti = pulisci.split()
-    return parti[0] if parti else ""
+if file_ods is not None:
+    # Salvataggio temporaneo del file inviato dall'utente
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".ods") as tmp_file:
+        tmp_file.write(file_ods.getvalue())
+        percorso_tmp = tmp_file.name
 
-# Mappa delle radici per il confronto flessibile
-MAPPA_MEMBERI = {}
-for op in GRUPPO_A_REALE:
-    base = estrai_cognome_base(op)
-    if base:
-        MAPPA_MEMBERI[base] = op
+    st.sidebar.success("File caricato con successo!")
 
-for op in GRUPPO_B_REALE:
-    base = estrai_cognome_base(op)
-    if base:
-        MAPPA_MEMBERI[base] = op
+    # Selezione del giorno (foglio del mese)
+    giorno_selezionato = st.sidebar.selectbox(
+        "Seleziona il giorno/foglio:",
+        options=[str(i) for i in range(1, 32)]
+    )
 
-def inizializza_cache_ods(percorso_ods):
-    global _CACHE_ODS
-    _CACHE_ODS.clear()
-    _CACHE_ODS = pd.read_excel(percorso_ods, sheet_name=None, engine='odf')
+    if st.sidebar.button("Elabora Giorno", type="primary"):
+        disp_m, disp_p, spec_m, spec_p, assenti = estrai_dati_giorno(percorso_tmp, giorno_selezionato)
 
-def pulisci_stringa(valore):
-    if pd.isna(valore):
-        return ""
-    return str(valore).strip().upper()
+        st.subheader(f"📅 Report per il Giorno {giorno_selezionato}")
 
-def carica_anagrafica_turni(percorso_ods=None):
-    """Ritorna direttamente le due liste dell'Anagrafica blindata."""
-    return list(GRUPPO_A_REALE), list(GRUPPO_B_REALE)
+        # Sezione Assenti
+        st.warning(f"❌ **Operatori Assenti ({len(assenti)}):**")
+        if assenti:
+            st.write(", ".join(assenti))
+        else:
+            st.info("Nessun assente rilevato in Colonna B per questo giorno.")
 
-def trova_operatore_match(testo_cella):
-    """Riconosce l'operatore anche se scritto solo come cognome o con varianti."""
-    if not testo_cella:
-        return None
-    testo_pulito = re.sub(r'[^A-Z\s]', '', testo_cella.upper())
-    parole = testo_pulito.split()
-    
-    for p in parole:
-        if len(p) >= 3 and p in MAPPA_MEMBERI:
-            return MAPPA_MEMBERI[p]
-    return None
+        st.markdown("---")
 
-def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
-    global _CACHE_ODS
-    if not _CACHE_ODS:
-        inizializza_cache_ods(percorso_ods)
+        # Layout a due colonne per Mattina e Pomeriggio
+        col1, col2 = st.columns(2)
 
+        with col1:
+            st.header("☀️ Turno Mattina")
+            st.markdown(f"**Disponibili ({len(disp_m)}):**")
+            for op in disp_m:
+                st.write(f"- {op}")
+
+            st.markdown("**Servizi Particolari Mattina:**")
+            if spec_m:
+                for op, serv, orario, _ in spec_m:
+                    st.write(f"• **{op}**: {serv} ({orario})")
+            else:
+                st.write(" Nessun servizio speciale registrato.")
+
+        with col2:
+            st.header("🌆 Turno Pomeriggio")
+            st.markdown(f"**Disponibili ({len(disp_p)}):**")
+            for op in disp_p:
+                st.write(f"- {op}")
+
+            st.markdown("**Servizi Particolari Pomeriggio:**")
+            if spec_p:
+                for op, serv, orario, _ in spec_p:
+                    st.write(f"• **{op}**: {serv} ({orario})")
+            else:
+                st.write(" Nessun servizio speciale registrato.")
+
+    # Pulizia del file temporaneo al termine dell'esecuzione
+    try:
+        os.remove(percorso_tmp)
+    except Exception:
+        pass
+
+else:
+    st.info("👈 Per iniziare, carica il file `.ods` dalla barra laterale a sinistra.")
+
+    # Mostra l'organico di riferimento attualmente caricato nel sistema
     turno_a, turno_b = carica_anagrafica_turni()
-
-    target_str = pulisci_stringa(nome_foglio_giorno)
-    foglio_target = next((s for s in _CACHE_ODS.keys() if pulisci_stringa(s) == target_str), None)
-    
-    if not foglio_target:
-        return [], [], [], [], []
-
-    df_giorno = _CACHE_ODS[foglio_target]
-    matrice_giorno = df_giorno.to_numpy()
-
-    # Determinazione Turno dalla Cella B2
-    indicatore_b2 = ""
-    if matrice_giorno.shape[0] > 0 and matrice_giorno.shape[1] > 1:
-        indicatore_b2 = pulisci_stringa(matrice_giorno[0, 1])
-
-    if "TURNO B" in indicatore_b2 or "TURNO:B" in indicatore_b2 or indicatore_b2 == "B":
-        squadra_mattina = list(turno_b)
-        squadra_pomeriggio = list(turno_a)
-    else:
-        squadra_mattina = list(turno_a)
-        squadra_pomeriggio = list(turno_b)
-
-    assenti = set()
-    servizi_speciali_assegnati = []
-    operatori_impegnati_speciali = set()
-    
-    num_righe, num_colonne = matrice_giorno.shape
-
-    # 1. Scansione Servizi Particolari (Colonne H-M)
-    for r in range(num_righe):
-        servizio = pulisci_stringa(matrice_giorno[r, 7]) if num_colonne > 7 else ""
-        orario = pulisci_stringa(matrice_giorno[r, 8]) if num_colonne > 8 else ""
-
-        if servizio and servizio != "NAN" and "SERVIZIO" not in servizio:
-            operatore_effettivo = None
-            for col_idx in [12, 11, 10, 9]:
-                if num_colonne > col_idx:
-                    val_op = pulisci_stringa(matrice_giorno[r, col_idx])
-                    if val_op and val_op != "NAN":
-                        match = trova_operatore_match(val_op)
-                        if match:
-                            operatore_effettivo = match
-                            break
-                    if operatore_effettivo:
-                        break
-
-            if operatore_effettivo:
-                turno_op = "MATTINA" if operatore_effettivo in squadra_mattina else "POMERIGGIO"
-                servizi_speciali_assegnati.append((operatore_effettivo, servizio, orario, turno_op))
-                operatori_impegnati_speciali.add(operatore_effettivo)
-
-    # 2. Rilevazione ASSENTI in Colonna B
-    for r in range(num_righe):
-        if num_colonne > 1:
-            cel_b = pulisci_stringa(matrice_giorno[r, 1])
-            if cel_b and cel_b != "NAN":
-                match = trova_operatore_match(cel_b)
-                if match:
-                    assenti.add(match)
-
-    disp_mattina = [op for op in squadra_mattina if op not in assenti and op not in OPERATORI_ESCLUSI_SEMPRE and op not in operatori_impegnati_speciali]
-    disp_pomeriggio = [op for op in squadra_pomeriggio if op not in assenti and op not in OPERATORI_ESCLUSI_SEMPRE and op not in operatori_impegnati_speciali]
-
-    spec_m = [item for item in servizi_speciali_assegnati if item[3] == "MATTINA"]
-    spec_p = [item for item in servizi_speciali_assegnati if item[3] == "POMERIGGIO"]
-
-    return disp_mattina, disp_pomeriggio, spec_m, spec_p, sorted(list(assenti))
+    st.markdown("---")
+    st.subheader("👥 Organico di Riferimento (Anagrafica)")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown(f"**Gruppo A ({len(turno_a)} operatori):**")
+        st.caption(", ".join(turno_a))
+    with c2:
+        st.markdown(f"**Gruppo B ({len(turno_b)} operatori):**")
+        st.caption(", ".join(turno_b))
