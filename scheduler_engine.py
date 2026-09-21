@@ -15,7 +15,9 @@ def calcola_punteggio_coppia(op1, op2, orario, totali_df, orari_df, coppie_df):
     tot2 = totali_df.loc[op2, 'Totale_PI'] if op2 in totali_df.index else 0
     punteggio += (tot1 + tot2) * 100
 
-    cop = coppie_df.loc[op1, op2] if (op1 in coppie_df.index and op2 in coppie_df.columns) else 0
+    cop = 0
+    if op1 in coppie_df.index and op2 in coppie_df.columns:
+        cop = coppie_df.loc[op1, op2]
     punteggio += cop * 500
 
     or1 = orari_df.loc[op1, orario] if (op1 in orari_df.index and orario in orari_df.columns) else 0
@@ -24,33 +26,40 @@ def calcola_punteggio_coppia(op1, op2, orario, totali_df, orari_df, coppie_df):
 
     return punteggio
 
+
 def aggiorna_stadera(coppie_pi, totali_df, orari_df, coppie_df):
-    """Aggiorna i contatori della Stadera nello stato globale dell'app."""
+    """Aggiorna la Stadera in modo sicuro senza errori di indicizzazione."""
     for ops, orario in coppie_pi:
         for op in ops:
+            # Totali PI
             if op not in totali_df.index:
                 totali_df.loc[op, 'Totale_PI'] = 0
             totali_df.loc[op, 'Totale_PI'] += 1
 
+            # Fasce Orarie
             if op not in orari_df.index:
-                orari_df.loc[op, orario] = 0
+                orari_df.loc[op, :] = 0
             if orario not in orari_df.columns:
                 orari_df[orario] = 0
-            orari_df.loc[op, orario] = orari_df.loc[op, orario] + 1
+            
+            val_orario = orari_df.loc[op, orario]
+            orari_df.loc[op, orario] = (0 if pd.isna(val_orario) else val_orario) + 1
 
+        # Matrice Coppie
         if len(ops) >= 2:
             op1, op2 = ops[0], ops[1]
-            if op1 not in coppie_df.index:
-                coppie_df.loc[op1] = 0
-            if op2 not in coppie_df.columns:
-                coppie_df[op2] = 0
-            if op2 not in coppie_df.index:
-                coppie_df.loc[op2] = 0
-            if op1 not in coppie_df.columns:
-                coppie_df[op1] = 0
+            
+            for o in [op1, op2]:
+                if o not in coppie_df.index:
+                    coppie_df.loc[o] = 0
+                if o not in coppie_df.columns:
+                    coppie_df[o] = 0
 
-            coppie_df.loc[op1, op2] = coppie_df.loc[op1, op2] + 1
-            coppie_df.loc[op2, op1] = coppie_df.loc[op2, op1] + 1
+            val_c1 = coppie_df.loc[op1, op2]
+            val_c2 = coppie_df.loc[op2, op1]
+            coppie_df.loc[op1, op2] = (0 if pd.isna(val_c1) else val_c1) + 1
+            coppie_df.loc[op2, op1] = (0 if pd.isna(val_c2) else val_c2) + 1
+
 
 def genera_turni_giorno(op_mattina, op_pomeriggio, giorno_nome, totali_df, orari_df, coppie_df):
     anomalie = []
@@ -126,7 +135,7 @@ def genera_turni_giorno(op_mattina, op_pomeriggio, giorno_nome, totali_df, orari
                 else:
                     coppie_ordinario.append(((idonei_rimasti[i],), "Singolo Ordinario"))
 
-        # Aggiorna la Stadera per la prossima elaborazione
+        # Aggiornamento Stadera
         aggiorna_stadera(coppie_pi, totali_df, orari_df, coppie_df)
 
         return coppie_pi, coppie_ordinario
