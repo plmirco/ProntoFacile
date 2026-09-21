@@ -158,7 +158,3 @@ if uploaded_file is not None:
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
-
-    finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
