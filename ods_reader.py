@@ -3,7 +3,12 @@ import pandas as pd
 from config_rules import OPERATORI_ESCLUSI_SEMPRE
 
 _CACHE_ODS = {}
-MOTIVI_ASSENZA_REALE = ["FERIE", "MALATTIA", "MAL", "PERMESSO", "POLIGONO", "CORSO", "CORSI", "RECUPERO", "REC.C", "REC. C"]
+
+# Parole chiave tassative per escludere totalmente chi è assente
+MOTIVI_ASSENZA_TASSATIVA = [
+    "MALATTIA", "MAL", "FERIE", "PERMESSO", "RECUPERO", "REC.C", "REC. C", 
+    "ASPETTATIVA", "CONGEDO", "LEGGE 104", "104", "INFORTUNIO"
+]
 
 def inizializza_cache_ods(percorso_ods):
     global _CACHE_ODS
@@ -11,7 +16,6 @@ def inizializza_cache_ods(percorso_ods):
     _CACHE_ODS = pd.read_excel(percorso_ods, sheet_name=None, engine='odf')
 
 def pulisci_stringa(valore):
-    """Converte qualsiasi valore in stringa pulita ed evita errori su valori non-stringa."""
     if pd.isna(valore):
         return ""
     return str(valore).strip().upper()
@@ -59,15 +63,13 @@ def carica_anagrafica_turni(percorso_ods):
                 elif gruppo == "B" and cognome not in turno_b:
                     turno_b.append(cognome)
 
-                if "FANTAZZINI" in cel_str:
-                    if gruppo == "A" and "FANTAZZINI" not in turno_a:
-                        turno_a.append("FANTAZZINI")
-                    elif gruppo == "B" and "FANTAZZINI" not in turno_b:
-                        turno_b.append("FANTAZZINI")
-
     return turno_a, turno_b
 
 def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
+    """
+    Estrae i presenti reali per il giorno specificato (1-31).
+    Separa RIGIDAMENTE Mattina e Pomeriggio ed elimina gli assenti.
+    """
     global _CACHE_ODS
     if not _CACHE_ODS:
         inizializza_cache_ods(percorso_ods)
@@ -78,36 +80,39 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
     foglio_target = next((s for s in _CACHE_ODS.keys() if pulisci_stringa(s) == target_str), None)
     
     if not foglio_target:
-        return turno_a, turno_b
+        return [], []
 
     df_giorno = _CACHE_ODS[foglio_target]
     matrice_giorno = df_giorno.to_numpy()
 
+    # Lettura cella B2 per capire se la mattina è A o B
     indicatore_b2 = ""
     if matrice_giorno.shape[0] > 0 and matrice_giorno.shape[1] > 1:
         indicatore_b2 = pulisci_stringa(matrice_giorno[0, 1])
 
-    if "TURNO A" in indicatore_b2 or "TURNO:A" in indicatore_b2 or indicatore_b2 == "A":
-        op_mattina, op_pomeriggio = turno_a, turno_b
-    elif "TURNO B" in indicatore_b2 or "TURNO:B" in indicatore_b2 or indicatore_b2 == "B":
-        op_mattina, op_pomeriggio = turno_b, turno_a
+    if "TURNO B" in indicatore_b2 or "TURNO:B" in indicatore_b2 or indicatore_b2 == "B":
+        squadra_mattina = list(turno_b)
+        squadra_pomeriggio = list(turno_a)
     else:
-        op_mattina, op_pomeriggio = turno_a, turno_b
+        squadra_mattina = list(turno_a)
+        squadra_pomeriggio = list(turno_b)
 
-    esclusi = set()
+    assenti_assoluti = set()
     tutti_ops = set(turno_a + turno_b)
 
     num_righe, num_colonne = matrice_giorno.shape
     for r in range(num_righe):
         for c in range(num_colonne):
             cel_upper = pulisci_stringa(matrice_giorno[r, c])
-            if cel_upper and cel_upper != "NAN" and "PI" not in cel_upper:
-                for op in tutti_ops:
-                    if op in cel_upper:
-                        if any(motivo in cel_upper for motivo in MOTIVI_ASSENZA_REALE):
-                            esclusi.add(op)
+            if cel_upper and cel_upper != "NAN":
+                # Se la cella contiene un motivo di assenza reale
+                if any(motivo in cel_upper for motivo in MOTIVI_ASSENZA_TASSATIVA):
+                    for op in tutti_ops:
+                        if op in cel_upper:
+                            assenti_assoluti.add(op)
 
-    disp_mattina = [op for op in op_mattina if op not in esclusi and op not in OPERATORI_ESCLUSI_SEMPRE]
-    disp_pomeriggio = [op for op in op_pomeriggio if op not in esclusi and op not in OPERATORI_ESCLUSI_SEMPRE]
+    # Filtra i presenti escludendo tassativamente gli assenti e gli esclusi sempre (Angelini, Sassu)
+    disp_mattina = [op for op in squadra_mattina if op not in assenti_assoluti and op not in OPERATORI_ESCLUSI_SEMPRE]
+    disp_pomeriggio = [op for op in squadra_pomeriggio if op not in assenti_assoluti and op not in OPERATORI_ESCLUSI_SEMPRE]
 
     return disp_mattina, disp_pomeriggio
