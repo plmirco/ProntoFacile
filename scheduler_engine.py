@@ -27,7 +27,6 @@ def calcola_punteggio_coppia(op1, op2, orario, totali_df, orari_df, coppie_df):
     return punteggio
 
 def aggiorna_stadera(coppie_pi, totali_df, orari_df, coppie_df):
-    """Incrementa i contatori dei servizi PI effettuati."""
     for ops, orario in coppie_pi:
         for op in ops:
             if op not in totali_df.index:
@@ -69,6 +68,7 @@ def genera_turni_giorno(op_mattina, op_pomeriggio, giorno_nome, totali_df, orari
         idonei_rimasti = list(idonei)
         coppie_pi = []
 
+        # Assegnazione Fantazzini se presente nel turno corrente
         if "FANTAZZINI" in idonei_rimasti:
             idonei_rimasti.remove("FANTAZZINI")
             candidati = [cand for cand in idonei_rimasti if verifica_coppia_valida("FANTAZZINI", cand)]
@@ -122,22 +122,23 @@ def genera_turni_giorno(op_mattina, op_pomeriggio, giorno_nome, totali_df, orari
                     operatori_gia_assegnati.add(op1)
                     operatori_gia_assegnati.add(op2)
 
+        # Servizio Ordinario generato chiaramente per il turno corrente
         coppie_ordinario = []
         if idonei_rimasti:
             random.shuffle(idonei_rimasti)
             if len(idonei_rimasti) % 2 != 0 and len(idonei_rimasti) >= 3:
                 terzetto = (idonei_rimasti.pop(0), idonei_rimasti.pop(0), idonei_rimasti.pop(0))
-                coppie_ordinario.append((terzetto, "Pattuglia da 3"))
+                coppie_ordinario.append((terzetto, f"Pattuglia da 3 ({nome_turno})"))
                 for op in terzetto:
                     operatori_gia_assegnati.add(op)
             
             for i in range(0, len(idonei_rimasti), 2):
                 if i + 1 < len(idonei_rimasti):
-                    coppie_ordinario.append(((idonei_rimasti[i], idonei_rimasti[i+1]), "Coppia Ordinario"))
+                    coppie_ordinario.append(((idonei_rimasti[i], idonei_rimasti[i+1]), f"Coppia Ordinario ({nome_turno})"))
                     operatori_gia_assegnati.add(idonei_rimasti[i])
                     operatori_gia_assegnati.add(idonei_rimasti[i+1])
                 else:
-                    coppie_ordinario.append(((idonei_rimasti[i],), "Singolo Ordinario"))
+                    coppie_ordinario.append(((idonei_rimasti[i],), f"Singolo Ordinario ({nome_turno})"))
                     operatori_gia_assegnati.add(idonei_rimasti[i])
 
         aggiorna_stadera(coppie_pi, totali_df, orari_df, coppie_df)
