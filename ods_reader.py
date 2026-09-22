@@ -48,7 +48,7 @@ def pulisci_stringa(valore):
     if pd.isna(valore):
         return ""
     val_str = str(valore).strip().upper()
-    return "" if val_str in ["NAN", "NONE", "UNNAMED", "---"] else val_str
+    return "" if val_str in ["NAN", "NONE", "UNNAMED", "---", "-"] else val_str
 
 def carica_anagrafica_turni(percorso_ods=None):
     return list(GRUPPO_A_REALE), list(GRUPPO_B_REALE)
@@ -134,26 +134,26 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
         val_h = pulisci_stringa(matrice_giorno[r, 7]) if num_colonne > 7 else ""
         val_i = pulisci_stringa(matrice_giorno[r, 8]) if num_colonne > 8 else ""
 
-        # Aggiorna Servizio Corrente
-        if val_h and "SERVIZI COMANDATI" not in val_h and "TIPO DI SERVIZIO" not in val_h:
+        # Aggiorna il Servizio SOLO se presente una stringa valida (Ignora righe vuote e intestazioni)
+        if val_h and not any(k in val_h for k in ["SERVIZI COMANDATI", "TIPO DI SERVIZIO"]):
             servizio_corrente = val_h
 
-        # Aggiorna Orario Corrente
-        if val_i and "ORARIO INIZIO" not in val_i:
+        # Aggiorna l'Orario SOLO se presente una stringa valida
+        if val_i and not any(k in val_i for k in ["ORARIO INIZIO", "ORARIO"]):
             orario_corrente = val_i
 
-        # Cerca un operatore dell'anagrafica nelle colonne M, L, K, J (da destra verso sinistra per i sostituti)
+        # Cerca un operatore valido dell'anagrafica nella riga corrente (da M verso J)
         operatore_trovato = None
         for col_idx in [12, 11, 10, 9]:
             if num_colonne > col_idx:
                 val_cell = pulisci_stringa(matrice_giorno[r, col_idx])
-                if val_cell and val_cell not in ["OPERATORE", "CAMBIO"]:
+                if val_cell and not any(k in val_cell for k in ["OPERATORE", "CAMBIO"]):
                     match = trova_operatore_match(val_cell)
                     if match:
                         operatore_trovato = match
                         break
 
-        # Se trovato, lo assegna al servizio e orario correnti
+        # Se troviamo un operatore dell'anagrafica, lo registriamo con l'ultimo servizio/orario validi incontrati
         if operatore_trovato:
             desc_servizio = servizio_corrente if servizio_corrente else "SERVIZIO SPECIALE"
             turno_op = classifica_turno_orario(orario_corrente)
