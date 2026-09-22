@@ -173,7 +173,7 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
             break
     
     if not foglio_target:
-        return [], [], [], [], [], []
+        return [], [], [], [], [], [], []
 
     df_giorno = _CACHE_ODS[foglio_target]
     matrice_giorno = df_giorno.to_numpy()
@@ -192,6 +192,7 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
     assenti = set()
     servizi_speciali_assegnati = []
     reperibili = []
+    richieste_particolari = []
     
     op_impegnati_mattina = set()
     op_impegnati_pomeriggio = set()
@@ -207,27 +208,43 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
                 if match_ass:
                     assenti.add(match_ass)
 
-    # 2. Scansione REPERIBILITÀ A (Colonne O, P -> indici 14, 15) e REPERIBILITÀ B (Colonne R, S -> indici 17, 18)
+    # 2. Scansione Reperibilità (Colonne O, P, R, S)
     for r in range(num_righe):
-        # Reperibilità A (Colonne O e P)
-        for col_idx in [15, 14]:
-            if num_colonne > col_idx:
-                val_rep_a = pulisci_stringa(matrice_giorno[r, col_idx])
-                match_a = trova_operatore_match(val_rep_a)
-                if match_a and not any(item[0] == match_a for item in reperibili):
-                    reperibili.append((match_a, "REPERIBILITÀ A"))
-                    break
+        for c in range(num_colonne):
+            testo_cel = pulisci_stringa(matrice_giorno[r, c])
+            if "REPERIB" in testo_cel or "REP." in testo_cel or "REP " in testo_cel:
+                tipo_rep = "REPERIBILITÀ B" if "B" in testo_cel else "REPERIBILITÀ A"
+                for offset_r in range(0, 15):
+                    for offset_c in range(0, 3):
+                        r_chk = r + offset_r
+                        c_chk = c + offset_c
+                        if r_chk < num_righe and c_chk < num_colonne:
+                            val_chk = pulisci_stringa(matrice_giorno[r_chk, c_chk])
+                            match_op = trova_operatore_match(val_chk)
+                            if match_op and not any(item[0] == match_op for item in reperibili):
+                                reperibili.append((match_op, tipo_rep))
 
-        # Reperibilità B (Colonne R e S)
-        for col_idx in [18, 17]:
-            if num_colonne > col_idx:
-                val_rep_b = pulisci_stringa(matrice_giorno[r, col_idx])
-                match_b = trova_operatore_match(val_rep_b)
-                if match_b and not any(item[0] == match_b for item in reperibili):
-                    reperibili.append((match_b, "REPERIBILITÀ B"))
-                    break
+    # 3. Scansione Richieste Particolari Operatori (Colonne O e P sotto Reperibilità)
+    for r in range(num_righe):
+        for c in range(num_colonne):
+            testo_cel = pulisci_stringa(matrice_giorno[r, c])
+            if "RICHIESTE" in testo_cel and "PARTICOLARI" in testo_cel:
+                for offset_r in range(1, 15):
+                    r_chk = r + offset_r
+                    if r_chk < num_righe:
+                        val_op_c = pulisci_stringa(matrice_giorno[r_chk, c]) if c < num_colonne else ""
+                        val_note_c = pulisci_stringa(matrice_giorno[r_chk, c + 1]) if (c + 1) < num_colonne else ""
+                        
+                        match_op = trova_operatore_match(val_op_c)
+                        if not match_op:
+                            match_op = trova_operatore_match(val_note_c)
+                            
+                        if match_op:
+                            nota_testo = val_note_c if val_note_c and match_op not in val_note_c else val_op_c
+                            if not any(item[0] == match_op for item in richieste_particolari):
+                                richieste_particolari.append((match_op, nota_testo))
 
-    # 3. Scansione Servizi Particolari (Colonne H-M)
+    # 4. Scansione Servizi Particolari (Colonne H-M)
     servizio_corrente = ""
     orario_corrente = ""
 
@@ -264,7 +281,7 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
                 else:
                     op_impegnati_pomeriggio.add(operatore_effettivo)
 
-    # 4. Controllo Notte Giorno Successivo
+    # 5. Controllo Notte Giorno Successivo
     try:
         giorno_num = int(re.sub(r'\D', '', str(nome_foglio_giorno)))
         giorno_succ_str = str(giorno_num + 1)
@@ -284,10 +301,19 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
     spec_m = [item for item in servizi_speciali_assegnati if item[3] == "MATTINA"]
     spec_p = [item for item in servizi_speciali_assegnati if item[3] == "POMERIGGIO"]
 
-    return disp_mattina, disp_pomeriggio, spec_m, spec_p, sorted(list(assenti)), reperibili
+    return disp_mattina, disp_pomeriggio, spec_m, spec_p, sorted(list(assenti)), reperibili, richieste_particolari
 
 def e_addestramento(op_nome):
     return any(cad in op_nome.upper() for cad in AGENTI_ADDESTRAMENTO)
+
+def sono_incompatibili(op1, op2):
+    o1_upper = op1.upper()
+    o2_upper = op2.upper()
+    if e_addestramento(o1_upper) and e_addestramento(o2_upper):
+        return True
+    if ("FANTAZZINI" in o1_upper and "BARTOLI" in o2_upper) or ("BARTOLI" in o1_upper and "FANTAZZINI" in o2_upper):
+        return True
+    return False
 
 def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
     ops = list(disponibili)
@@ -322,7 +348,7 @@ def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
     if fantazzini_op and ops_ordinati:
         partner_idx = None
         for i, candidato in enumerate(ops_ordinati):
-            if not (e_addestramento(fantazzini_op) and e_addestramento(candidato)):
+            if not sono_incompatibili(fantazzini_op, candidato):
                 partner_idx = i
                 break
         
@@ -337,7 +363,7 @@ def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
         op2_idx = None
         
         for i, op2_cand in enumerate(ops_ordinati):
-            if not (e_addestramento(op1) and e_addestramento(op2_cand)):
+            if not sono_incompatibili(op1, op2_cand):
                 op2_idx = i
                 break
                 
@@ -362,7 +388,7 @@ def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
         op2_idx = None
         
         for i, op2_cand in enumerate(ops_ordinati):
-            if not (e_addestramento(op1) and e_addestramento(op2_cand)):
+            if not sono_incompatibili(op1, op2_cand):
                 op2_idx = i
                 break
                 
@@ -377,12 +403,11 @@ def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
     if ops_ordinati:
         for spaiato in ops_ordinati:
             assegnato = False
-            if e_addestramento(spaiato):
-                for p in altre_coppie:
-                    if not any(e_addestramento(comp) for comp in p["componenti"]):
-                        p["componenti"].append(spaiato)
-                        assegnato = True
-                        break
+            for p in altre_coppie:
+                if not any(sono_incompatibili(spaiato, comp) for comp in p["componenti"]):
+                    p["componenti"].append(spaiato)
+                    assegnato = True
+                    break
             if not assegnato:
                 altre_coppie.append({"servizio": "Pattuglia Singola/Supporto", "componenti": [spaiato]})
 
