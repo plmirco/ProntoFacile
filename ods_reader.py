@@ -11,7 +11,6 @@ except ImportError:
 
 _CACHE_ODS = {}
 
-# ANAGRAFICA UFFICIALE RIGIDA (49 OPERATORI)
 GRUPPO_A_REALE = [
     "ANGELINI L.", "ARMAROLI", "ATTI", "BELLUZZI", "BINI", "BONZI", "BRUSA", 
     "BUTTAZZI", "CATANZARO", "COCCODA", "DEL VECCHIO", "FARNETI", "FORZANO", 
@@ -62,16 +61,13 @@ def trova_operatore_match(testo_cella):
         return None
     testo_pulito = re.sub(r'[^A-Z\s]', '', testo_cella.upper()).strip()
     parole = testo_pulito.split()
-    
     for p in parole:
         p_solida = re.sub(r'[^A-Z]', '', p)
         if len(p_solida) >= 3 and p_solida in MAPPA_MEMBRI:
             return MAPPA_MEMBRI[p_solida]
-            
     intera = re.sub(r'[^A-Z]', '', testo_pulito)
     if intera in MAPPA_MEMBRI:
         return MAPPA_MEMBRI[intera]
-        
     return None
 
 def estrai_orario_da_stringhe(testo_servizio, testo_orario):
@@ -102,6 +98,60 @@ def crea_stadera_vuota():
     colonne = ["OPERATORE", "TOT_PI", "PI_07:00", "PI_07:30", "PI_08:00", "PI_13:00", "PI_13:30", "PI_14:00"]
     dati = [[op, 0, 0, 0, 0, 0, 0, 0] for op in tutti_ops]
     return pd.DataFrame(dati, columns=colonne)
+
+def ottieni_operatori_notturni_giorno(percorso_ods, giorno_target_str):
+    global _CACHE_ODS
+    if not _CACHE_ODS:
+        inizializza_cache_ods(percorso_ods)
+    
+    target_clean = re.sub(r'[^0-9A-Z]', '', str(giorno_target_str).upper())
+    foglio_target = None
+    for k in _CACHE_ODS.keys():
+        k_clean = re.sub(r'[^0-9A-Z]', '', str(k).upper())
+        if target_clean == k_clean or target_clean in k_clean:
+            foglio_target = k
+            break
+            
+    if not foglio_target:
+        return set()
+
+    df_giorno = _CACHE_ODS[foglio_target]
+    matrice = df_giorno.to_numpy()
+    num_righe, num_colonne = matrice.shape
+    ops_notte = set()
+
+    servizio_corrente = ""
+    orario_corrente = ""
+
+    for r in range(num_righe):
+        cel_servizio = pulisci_stringa(matrice[r, 7]) if num_colonne > 7 else ""
+        cel_orario_grezzo = pulisci_stringa(matrice[r, 8]) if num_colonne > 8 else ""
+
+        if cel_servizio and "SERVIZI COMANDATI" not in cel_servizio:
+            servizio_corrente = cel_servizio
+
+        orario_estratto = estrai_orario_da_stringhe(cel_servizio, cel_orario_grezzo)
+        if orario_estratto:
+            orario_corrente = orario_estratto
+
+        operatore_effettivo = None
+        for col_idx in [12, 11, 10, 9]:
+            if num_colonne > col_idx:
+                val_op = pulisci_stringa(matrice[r, col_idx])
+                if val_op and not any(k in val_op for k in ["OPERATORE", "CAMBIO"]):
+                    match = trova_operatore_match(val_op)
+                    if match:
+                        operatore_effettivo = match
+                        break
+
+        if operatore_effettivo:
+            numeri = re.findall(r'\b\d{1,2}\b', orario_corrente)
+            if numeri:
+                ora = int(numeri[0])
+                if ora >= 22 or ora <= 2:
+                    ops_notte.add(operatore_effettivo)
+
+    return ops_notte
 
 def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
     global _CACHE_ODS
@@ -142,7 +192,7 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
     
     num_righe, num_colonne = matrice_giorno.shape
 
-    # 1. Rilevazione ASSENTI in Colonna B (Indice 1)
+    # 1. Assenti
     for r in range(num_righe):
         if num_colonne > 1:
             cel_b = pulisci_stringa(matrice_giorno[r, 1])
@@ -151,7 +201,7 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
                 if match:
                     assenti.add(match)
 
-    # 2. Scansione Servizi Particolari a Squadra (Colonne H-M)
+    # 2. Servizi Speciali
     servizio_corrente = ""
     orario_corrente = ""
 
@@ -188,6 +238,20 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
                 else:
                     op_impegnati_pomeriggio.add(operatore_effettivo)
 
+    # 3. Controllo Notte Giorno Successivo (Spostamento Automatico in Mattina)
+    try:
+        giorno_num = int(re.sub(r'\D', '', str(nome_foglio_giorno)))
+        giorno_succ_str = str(giorno_num + 1)
+        ops_notte_domani = ottieni_operatori_notturni_giorno(percorso_ods, giorno_succ_str)
+        
+        for op in ops_notte_domani:
+            if op in squadra_pomeriggio and op not in assenti and op not in op_impegnati_pomeriggio:
+                squadra_pomeriggio.remove(op)
+                if op not in squadra_mattina:
+                    squadra_mattina.append(op)
+    except Exception:
+        pass
+
     disp_mattina = [op for op in squadra_mattina if op not in assenti and op not in OPERATORI_ESCLUSI_SEMPRE and op not in op_impegnati_mattina]
     disp_pomeriggio = [op for op in squadra_pomeriggio if op not in assenti and op not in OPERATORI_ESCLUSI_SEMPRE and op not in op_impegnati_pomeriggio]
 
@@ -200,8 +264,6 @@ def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
     ops = list(disponibili)
     df_s = df_stadera.copy()
 
-    # Gestione specifica ANGELINI L.: non fa PI e lavora da solo
-    angelini_presente = any("ANGELINI" in op for op in ops)
     angelini_op = next((op for op in ops if "ANGELINI" in op), None)
     if angelini_op:
         ops.remove(angelini_op)
@@ -242,8 +304,6 @@ def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
         pattuglie_pi.append({"servizio": f"Pronto Intervento ({orario})", "orario": orario, "componenti": [op1, op2]})
 
     altre_coppie = []
-    
-    # Se ANGELINI L. è disponibile, lo inseriamo subito come Pattuglia Singola
     if angelini_op:
         altre_coppie.append({"servizio": "Servizio Territorio Singolo / Supporto", "componenti": [angelini_op]})
 
