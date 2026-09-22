@@ -75,16 +75,13 @@ def trova_operatore_match(testo_cella):
     return None
 
 def normalizza_orario_cella(val_i):
-    """Pulisce la cella specifica dell'orario (Colonna I / Indice 8)."""
     if not val_i:
         return ""
     
-    # Se è già in formato HH:MM o HH.MM
     m = re.search(r'\b([01]?\d|2[0-3])[\:\.]([0-5]\d)\b', val_i)
     if m:
         return f"{int(m.group(1)):02d}:{m.group(2)}"
     
-    # Se è espresso solo come cifra oraria (es. "22" o "19" o "7")
     m_ora = re.search(r'\b([01]?\d|2[0-3])\b', val_i)
     if m_ora:
         ora = int(m_ora.group(1))
@@ -130,17 +127,9 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
     if not foglio_target:
         return [], [], [], [], []
 
-    df_giorno = _CACHE_ODS[foglio_target].copy()
-
-    # Riempiamo le celle unificate per Servizi (Col H / Indice 7) e Orari (Col I / Indice 8)
-    if df_giorno.shape[1] > 7:
-        df_giorno.iloc[:, 7] = df_giorno.iloc[:, 7].ffill()
-    if df_giorno.shape[1] > 8:
-        df_giorno.iloc[:, 8] = df_giorno.iloc[:, 8].ffill()
-
+    df_giorno = _CACHE_ODS[foglio_target]
     matrice_giorno = df_giorno.to_numpy()
 
-    # Determinazione Squadra Montante da Cella B2
     indicatore_b2 = ""
     if matrice_giorno.shape[0] > 0 and matrice_giorno.shape[1] > 1:
         indicatore_b2 = pulisci_stringa(matrice_giorno[0, 1])
@@ -169,19 +158,26 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
                 if match:
                     assenti.add(match)
 
-    # 2. Scansione Servizi Particolari (Colonne H-M)
+    # 2. Scansione Servizi Particolari a Squadra (Colonne H-M)
+    servizio_corrente = ""
+    orario_corrente = ""
+
     for r in range(num_righe):
         cel_servizio = pulisci_stringa(matrice_giorno[r, 7]) if num_colonne > 7 else ""
         cel_orario_grezzo = pulisci_stringa(matrice_giorno[r, 8]) if num_colonne > 8 else ""
 
-        # Ignoriamo le intestazioni di tabella
-        if "SERVIZI COMANDATI" in cel_servizio or "TIPO DI SERVIZIO" in cel_servizio:
-            continue
+        # Aggiorna il nome del servizio se presente in Colonna H
+        if cel_servizio and "SERVIZI COMANDATI" not in cel_servizio and "TIPO DI SERVIZIO" not in cel_servizio:
+            servizio_corrente = cel_servizio
 
-        orario_effettivo = normalizza_orario_cella(cel_orario_grezzo)
+        # Aggiorna l'orario se presente in Colonna I
+        orario_norm = normalizza_orario_cella(cel_orario_grezzo)
+        if orario_norm:
+            orario_corrente = orario_norm
 
-        # Cerca l'operatore reale dell'anagrafica nelle colonne M, L, K, J (da destra a sinistra per priorità sostituti)
         operatore_effettivo = None
+        
+        # ScansioneColonne M, L, K, J (12 down to 9) per priorità sostituti
         for col_idx in [12, 11, 10, 9]:
             if num_colonne > col_idx:
                 val_op = pulisci_stringa(matrice_giorno[r, col_idx])
@@ -191,11 +187,14 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
                         operatore_effettivo = match
                         break
 
-        if operatore_effettivo and cel_servizio:
+        if operatore_effettivo:
+            desc_servizio = servizio_corrente if servizio_corrente else "SERVIZIO SPECIALE"
+            orario_effettivo = orario_corrente if orario_corrente else "07:00"
+            
             turno_op = classifica_turno_orario(orario_effettivo)
             
             if not any(item[0] == operatore_effettivo for item in servizi_speciali_assegnati):
-                servizi_speciali_assegnati.append((operatore_effettivo, cel_servizio, orario_effettivo, turno_op))
+                servizi_speciali_assegnati.append((operatore_effettivo, desc_servizio, orario_effettivo, turno_op))
                 if turno_op == "MATTINA":
                     op_impegnati_mattina.add(operatore_effettivo)
                 else:
