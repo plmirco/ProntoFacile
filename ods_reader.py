@@ -32,18 +32,16 @@ def estrai_cognome_base(nome_completo):
     pulisci = re.sub(r'[^A-Z]', '', nome_completo.upper())
     return pulisci
 
-# Mappatura dei cognomi puliti verso il nome completo dell'anagrafica
 MAPPA_MEMBRI = {}
 for op in GRUPPO_A_REALE + GRUPPO_B_REALE:
-    # Registra sia il cognome principale che l'intera stringa senza spazi/punti
-    chiave_lunga = re.sub(r'[^A-Z]', '', op.upper())
     parti = op.upper().split()
-    cognome_principale = re.sub(r'[^A-Z]', '', parti[0])
+    cognome_solido = re.sub(r'[^A-Z]', '', parti[0])
+    stringa_intera = re.sub(r'[^A-Z]', '', op.upper())
     
-    if cognome_principale and len(cognome_principale) >= 3:
-        MAPPA_MEMBRI[cognome_principale] = op
-    if chiave_lunga:
-        MAPPA_MEMBRI[chiave_lunga] = op
+    if cognome_solido and len(cognome_solido) >= 3:
+        MAPPA_MEMBRI[cognome_solido] = op
+    if stringa_intera:
+        MAPPA_MEMBRI[stringa_intera] = op
 
 def inizializza_cache_ods(percorso_ods):
     global _CACHE_ODS
@@ -54,7 +52,7 @@ def pulisci_stringa(valore):
     if pd.isna(valore):
         return ""
     val_str = str(valore).strip().upper()
-    if val_str in ["NAN", "NONE", "UNNAMED", "---", "--", "-"]:
+    if val_str in ["NAN", "NONE", "UNNAMED", "---", "--", "-", "00:00:00"]:
         return ""
     return val_str
 
@@ -64,17 +62,14 @@ def carica_anagrafica_turni(percorso_ods=None):
 def trova_operatore_match(testo_cella):
     if not testo_cella:
         return None
-    
     testo_pulito = re.sub(r'[^A-Z\s]', '', testo_cella.upper()).strip()
     parole = testo_pulito.split()
     
-    # Check 1: parola per parola
     for p in parole:
         p_solida = re.sub(r'[^A-Z]', '', p)
         if len(p_solida) >= 3 and p_solida in MAPPA_MEMBRI:
             return MAPPA_MEMBRI[p_solida]
             
-    # Check 2: stringa intera unificata
     intera = re.sub(r'[^A-Z]', '', testo_pulito)
     if intera in MAPPA_MEMBRI:
         return MAPPA_MEMBRI[intera]
@@ -85,9 +80,9 @@ def classifica_turno_orario(orario_str):
     if not orario_str:
         return "MATTINA"
     
-    m = re.search(r'(\d{1,2})', orario_str)
-    if m:
-        ora = int(m.group(1))
+    numeri = re.findall(r'\b\d{1,2}\b', orario_str)
+    if numeri:
+        ora = int(numeri[0])
         if ora >= 22 or ora <= 8:
             return "MATTINA"
         elif 12 <= ora <= 21:
@@ -116,6 +111,7 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
     df_giorno = _CACHE_ODS[foglio_target]
     matrice_giorno = df_giorno.to_numpy()
 
+    # Determinazione Squadra Montante da Cella B2
     indicatore_b2 = ""
     if matrice_giorno.shape[0] > 0 and matrice_giorno.shape[1] > 1:
         indicatore_b2 = pulisci_stringa(matrice_giorno[0, 1])
@@ -139,7 +135,7 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
     for r in range(num_righe):
         if num_colonne > 1:
             cel_b = pulisci_stringa(matrice_giorno[r, 1])
-            if cel_b:
+            if cel_b and "FERIE" not in cel_b and "MALATTIE" not in cel_b:
                 match = trova_operatore_match(cel_b)
                 if match:
                     assenti.add(match)
@@ -152,20 +148,21 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
         cel_servizio = pulisci_stringa(matrice_giorno[r, 7]) if num_colonne > 7 else ""
         cel_orario = pulisci_stringa(matrice_giorno[r, 8]) if num_colonne > 8 else ""
 
-        if cel_servizio and "SERVIZIO" not in cel_servizio and "COMANDATI" not in cel_servizio:
+        # Aggiorna il Servizio se c'è un testo valido che non sia intestazione
+        if cel_servizio and not any(k in cel_servizio for k in ["SERVIZI COMANDATI", "TIPO DI SERVIZIO"]):
             servizio_attuale = cel_servizio
-            if cel_orario:
-                orario_attuale = cel_orario
-        elif cel_orario and "ORARIO" not in cel_orario:
+
+        # Aggiorna l'Orario se c'è un valore valido che non sia intestazione
+        if cel_orario and "ORARIO" not in cel_orario:
             orario_attuale = cel_orario
 
         operatore_effettivo = None
         
-        # ScansioneColonne M, L, K, J per trovare il primo operatore valido
+        # ScansioneColonne M, L, K, J (12 down to 9) per dare priorità al sostituto
         for col_idx in [12, 11, 10, 9]:
             if num_colonne > col_idx:
                 val_op = pulisci_stringa(matrice_giorno[r, col_idx])
-                if val_op and "OPERATORE" not in val_op and "CAMBIO" not in val_op:
+                if val_op and not any(k in val_op for k in ["OPERATORE", "CAMBIO"]):
                     match = trova_operatore_match(val_op)
                     if match:
                         operatore_effettivo = match
