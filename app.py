@@ -5,7 +5,8 @@ import tempfile
 import pandas as pd
 from ods_reader import (
     estrai_dati_giorno, carica_anagrafica_turni, 
-    genera_coppie_pi_con_stadera, crea_stadera_vuota
+    genera_coppie_pi_con_stadera, crea_stadera_vuota,
+    GRUPPO_A_REALE, GRUPPO_B_REALE
 )
 
 st.set_page_config(
@@ -17,7 +18,6 @@ st.set_page_config(
 st.title("🚔 Gestione Turni, Pronto Intervento e Stadera")
 st.markdown("---")
 
-# Inizializzazione della Stadera nello Session State di Streamlit
 if "df_stadera_attuale" not in st.session_state:
     st.session_state["df_stadera_attuale"] = crea_stadera_vuota()
 
@@ -58,7 +58,7 @@ if file_ods is not None:
         giorni_scelti = st.sidebar.multiselect(
             "Seleziona giorni:",
             options=tutti_giorni,
-            default=["10"]
+            default=["17"]
         )
 
     if giorni_scelti:
@@ -67,6 +67,32 @@ if file_ods is not None:
         for idx, g_str in enumerate(giorni_scelti):
             with tabs[idx]:
                 disp_m, disp_p, spec_m, spec_p, assenti = estrai_dati_giorno(percorso_tmp, g_str)
+
+                # --- SEZIONE OVERRIDE MANUALE ---
+                st.subheader("🔄 Modifica Manuale Turni Operatori")
+                col_ov1, col_ov2 = st.columns(2)
+                
+                tutti_ops = sorted(GRUPPO_A_REALE + GRUPPO_B_REALE)
+                
+                with col_ov1:
+                    op_da_spostare = st.selectbox("Seleziona Operatore:", ["Nessuno"] + tutti_ops, key=f"sel_op_{g_str}")
+                with col_ov2:
+                    nuovo_turno = st.radio("Sposta nel turno:", ["Non Modificare", "Mattina", "Pomeriggio"], key=f"rad_t_{g_str}")
+
+                if op_da_spostare != "Nessuno" and nuovo_turno != "Non Modificare":
+                    if nuovo_turno == "Mattina":
+                        if op_da_spostare in disp_p:
+                            disp_p.remove(op_da_spostare)
+                        if op_da_spostare not in disp_m and op_da_spostare not in assenti:
+                            disp_m.append(op_da_spostare)
+                    elif nuovo_turno == "Pomeriggio":
+                        if op_da_spostare in disp_m:
+                            disp_m.remove(op_da_spostare)
+                        if op_da_spostare not in disp_p and op_da_spostare not in assenti:
+                            disp_p.append(op_da_spostare)
+                    st.success(f"Operatore {op_da_spostare} spostato nel turno di {nuovo_turno}!")
+
+                st.markdown("---")
 
                 st.warning(f"❌ **Operatori Assenti / Non Disponibili ({len(assenti)}):**")
                 if assenti:
@@ -81,7 +107,7 @@ if file_ods is not None:
                 with col1:
                     st.header("☀️ Turno Mattina")
                     st.markdown(f"**Disponibili per Pattuglie ({len(disp_m)}):**")
-                    st.caption(", ".join(disp_m) if disp_m else "Nessuno")
+                    st.caption(", ".join(sorted(disp_m)) if disp_m else "Nessuno")
 
                     st.markdown("**Servizi Comandati/Speciali:**")
                     if spec_m:
@@ -93,7 +119,7 @@ if file_ods is not None:
                 with col2:
                     st.header("🌆 Turno Pomeriggio")
                     st.markdown(f"**Disponibili per Pattuglie ({len(disp_p)}):**")
-                    st.caption(", ".join(disp_p) if disp_p else "Nessuno")
+                    st.caption(", ".join(sorted(disp_p)) if disp_p else "Nessuno")
 
                     st.markdown("**Servizi Comandati/Speciali:**")
                     if spec_p:
