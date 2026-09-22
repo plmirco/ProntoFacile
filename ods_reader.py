@@ -72,7 +72,6 @@ def classifica_turno_orario(orario_str):
     return "MATTINA"
 
 def crea_stadera_vuota():
-    """Genera una struttura DataFrame vuota per la stadera dei 49 operatori."""
     tutti_ops = GRUPPO_A_REALE + GRUPPO_B_REALE
     colonne = ["OPERATORE", "TOT_PI", "PI_07:00", "PI_07:30", "PI_08:00", "PI_13:00", "PI_13:30", "PI_14:00"]
     dati = []
@@ -166,13 +165,10 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
 
     return disp_mattina, disp_pomeriggio, spec_m, spec_p, sorted(list(assenti))
 
-
 def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
-    """Genera le coppie bilanciando i PI totali e gli orari in base alla stadera."""
     ops = list(disponibili)
     df_s = df_stadera.copy()
 
-    # Ordina i disponibili in base a chi ha MENO PI effettuati
     ops_ordinati = sorted(ops, key=lambda x: df_s.loc[df_s["OPERATORE"] == x, "TOT_PI"].values[0] if x in df_s["OPERATORE"].values else 0)
 
     fantazzini_op = next((op for op in ops_ordinati if "FANTAZZINI" in op), None)
@@ -183,7 +179,6 @@ def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
     orari_disponibili = list(ORARI_PI_MATTINA) if turno == "MATTINA" else list(ORARI_PI_POMERIGGIO)
 
     def scegli_orario_equo(op1, op2, orari_list):
-        """Sceglie tra gli orari rimasti quello meno effettuato dalla coppia."""
         best_orario = orari_list[0]
         min_score = 9999
         for orario in set(orari_list):
@@ -196,14 +191,12 @@ def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
                 best_orario = orario
         return best_orario
 
-    # 1. Assegnazione Fantazzini se presente
     if fantazzini_op and ops_ordinati:
         partner = ops_ordinati.pop(0)
         orario = scegli_orario_equo(fantazzini_op, partner, orari_disponibili)
         orari_disponibili.remove(orario)
         pattuglie_pi.append({"servizio": f"Pronto Intervento ({orario})", "orario": orario, "componenti": [fantazzini_op, partner]})
 
-    # 2. Generazione degli altri PI con i meno caricati
     while orari_disponibili and len(ops_ordinati) >= 2:
         op1 = ops_ordinati.pop(0)
         op2 = ops_ordinati.pop(0)
@@ -211,7 +204,6 @@ def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
         orari_disponibili.remove(orario)
         pattuglie_pi.append({"servizio": f"Pronto Intervento ({orario})", "orario": orario, "componenti": [op1, op2]})
 
-    # 3. Accoppiamento dei rimanenti per il Territorio
     altre_coppie = []
     idx_pattuglia = 1
     random.shuffle(ops_ordinati)
@@ -230,7 +222,6 @@ def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
         else:
             altre_coppie.append({"servizio": "Pattuglia Singola/Supporto", "componenti": [spaiato]})
 
-    # 4. Aggiornamento contatori sulla Stadera
     for p in pattuglie_pi:
         orario = p["orario"]
         col_orario = f"PI_{orario}"
