@@ -71,6 +71,16 @@ def trova_operatore_match(testo_cella):
         
     return None
 
+def estrai_orario_da_testo(testo_riga):
+    """Cerca un orario nel formato HH:MM o HH.MM o un numero tra 0 e 23."""
+    m = re.search(r'\b([01]?\d|2[0-3])[\:\.][0-5]\d\b', testo_riga)
+    if m:
+        return m.group(0)
+    m_ora = re.search(r'\b(22|23|00|01|02|03|04|05|06|07|08|12|13|14|15|16|17|18|19|20|21)\b', testo_riga)
+    if m_ora:
+        return f"{m_ora.group(1)}:00"
+    return ""
+
 def classifica_turno_orario(orario_str):
     if not orario_str:
         return "MATTINA"
@@ -112,7 +122,6 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
     df_giorno = _CACHE_ODS[foglio_target]
     matrice_giorno = df_giorno.to_numpy()
 
-    # Determinazione Squadra Montante da Cella B2
     indicatore_b2 = ""
     if matrice_giorno.shape[0] > 0 and matrice_giorno.shape[1] > 1:
         indicatore_b2 = pulisci_stringa(matrice_giorno[0, 1])
@@ -142,47 +151,40 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
                     assenti.add(match)
 
     # 2. Scansione Totale Servizi Particolari su Tutto il Foglio
-    servizio_corrente = ""
-    orario_corrente = ""
+    ultimo_servizio_trovato = ""
+    ultimo_orario_trovato = ""
 
     for r in range(num_righe):
-        cel_servizio = pulisci_stringa(matrice_giorno[r, 7]) if num_colonne > 7 else ""
-        cel_orario = pulisci_stringa(matrice_giorno[r, 8]) if num_colonne > 8 else ""
-
-        if cel_servizio and "SERVIZI COMANDATI" not in cel_servizio and "TIPO DI SERVIZIO" not in cel_servizio:
-            servizio_corrente = cel_servizio
-
-        if cel_orario and "ORARIO" not in cel_orario:
-            orario_corrente = cel_orario
-
-        operatore_effettivo = None
+        testo_riga_completo = " ".join([pulisci_stringa(matrice_giorno[r, c]) for c in range(num_colonne)])
         
-        # ScansioneColonne M, L, K, J per trovare il primo operatore reale dell'anagrafica
+        cel_servizio = pulisci_stringa(matrice_giorno[r, 7]) if num_colonne > 7 else ""
+        if cel_servizio and not any(k in cel_servizio for k in ["SERVIZI COMANDATI", "TIPO DI SERVIZIO"]):
+            ultimo_servizio_trovato = cel_servizio
+
+        # Cerca un orario valido sulla riga
+        orario_riga = estrai_orario_da_testo(testo_riga_completo)
+        if orario_riga:
+            ultimo_orario_trovato = orario_riga
+
+        # Cerca se c'è un operatore reale dell'anagrafica nella riga
+        operatore_effettivo = None
         for col_idx in [12, 11, 10, 9]:
             if num_colonne > col_idx:
                 val_op = pulisci_stringa(matrice_giorno[r, col_idx])
-                if val_op and "OPERATORE" not in val_op and "CAMBIO" not in val_op:
+                if val_op and not any(k in val_op for k in ["OPERATORE", "CAMBIO"]):
                     match = trova_operatore_match(val_op)
                     if match:
                         operatore_effettivo = match
                         break
 
         if operatore_effettivo:
-            # Se la riga non ha orario esplicito, cerca l'orario più vicino sopra o sotto
-            orario_valido = orario_corrente
-            if not orario_valido:
-                for r_search in range(max(0, r - 5), min(num_righe, r + 6)):
-                    if num_colonne > 8:
-                        candidate_orario = pulisci_stringa(matrice_giorno[r_search, 8])
-                        if candidate_orario and "ORARIO" not in candidate_orario:
-                            orario_valido = candidate_orario
-                            break
-
-            desc_servizio = servizio_corrente if servizio_corrente else "SERVIZIO SPECIALE"
-            turno_op = classifica_turno_orario(orario_valido)
+            desc_servizio = ultimo_servizio_trovato if ultimo_servizio_trovato else "SERVIZIO SPECIALE"
+            orario_effettivo = ultimo_orario_trovato if ultimo_orario_trovato else "07:00"
+            
+            turno_op = classifica_turno_orario(orario_effettivo)
             
             if not any(item[0] == operatore_effettivo for item in servizi_speciali_assegnati):
-                servizi_speciali_assegnati.append((operatore_effettivo, desc_servizio, orario_valido, turno_op))
+                servizi_speciali_assegnati.append((operatore_effettivo, desc_servizio, orario_effettivo, turno_op))
                 if turno_op == "MATTINA":
                     op_impegnati_mattina.add(operatore_effettivo)
                 else:
