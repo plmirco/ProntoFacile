@@ -74,15 +74,17 @@ def trova_operatore_match(testo_cella):
         
     return None
 
-def normalizza_orario_cella(val_i):
-    if not val_i:
-        return ""
+def estrai_orario_da_stringhe(testo_servizio, testo_orario):
+    """Estrae un orario valido sia dalla colonna orario che dalla colonna servizio."""
+    unione = f"{testo_orario} {testo_servizio}"
     
-    m = re.search(r'\b([01]?\d|2[0-3])[\:\.]([0-5]\d)\b', val_i)
+    # Cerca formato HH:MM o HH.MM
+    m = re.search(r'\b([01]?\d|2[0-3])[\:\.]([0-5]\d)\b', unione)
     if m:
         return f"{int(m.group(1)):02d}:{m.group(2)}"
     
-    m_ora = re.search(r'\b([01]?\d|2[0-3])\b', val_i)
+    # Cerca numero d'ora isolato (es. 22, 19, 13, 07)
+    m_ora = re.search(r'\b(22|23|00|01|02|03|04|05|06|07|08|12|13|14|15|16|17|18|19|20|21)\b', unione)
     if m_ora:
         ora = int(m_ora.group(1))
         return f"{ora:02d}:00"
@@ -166,14 +168,14 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
         cel_servizio = pulisci_stringa(matrice_giorno[r, 7]) if num_colonne > 7 else ""
         cel_orario_grezzo = pulisci_stringa(matrice_giorno[r, 8]) if num_colonne > 8 else ""
 
-        # Aggiorna il nome del servizio se presente in Colonna H
+        # Aggiorna il servizio se presente (escludendo intestazioni)
         if cel_servizio and "SERVIZI COMANDATI" not in cel_servizio and "TIPO DI SERVIZIO" not in cel_servizio:
             servizio_corrente = cel_servizio
 
-        # Aggiorna l'orario se presente in Colonna I
-        orario_norm = normalizza_orario_cella(cel_orario_grezzo)
-        if orario_norm:
-            orario_corrente = orario_norm
+        # Cerca se c'è un orario esplicito sulla riga (da Col I o Col H)
+        orario_estratto = estrai_orario_da_stringhe(cel_servizio, cel_orario_grezzo)
+        if orario_estratto:
+            orario_corrente = orario_estratto
 
         operatore_effettivo = None
         
