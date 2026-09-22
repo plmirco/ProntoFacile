@@ -75,26 +75,19 @@ def trova_operatore_match(testo_cella):
     return None
 
 def estrai_orario_da_stringhe(testo_servizio, testo_orario):
-    """Estrae un orario valido sia dalla colonna orario che dalla colonna servizio."""
     unione = f"{testo_orario} {testo_servizio}"
-    
-    # Cerca formato HH:MM o HH.MM
     m = re.search(r'\b([01]?\d|2[0-3])[\:\.]([0-5]\d)\b', unione)
     if m:
         return f"{int(m.group(1)):02d}:{m.group(2)}"
-    
-    # Cerca numero d'ora isolato (es. 22, 19, 13, 07)
     m_ora = re.search(r'\b(22|23|00|01|02|03|04|05|06|07|08|12|13|14|15|16|17|18|19|20|21)\b', unione)
     if m_ora:
         ora = int(m_ora.group(1))
         return f"{ora:02d}:00"
-        
     return ""
 
 def classifica_turno_orario(orario_str):
     if not orario_str:
         return "MATTINA"
-    
     numeri = re.findall(r'\b\d{1,2}\b', orario_str)
     if numeri:
         ora = int(numeri[0])
@@ -116,7 +109,6 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
         inizializza_cache_ods(percorso_ods)
 
     turno_a, turno_b = carica_anagrafica_turni()
-
     target_clean = re.sub(r'[^0-9A-Z]', '', str(nome_foglio_giorno).upper())
     
     foglio_target = None
@@ -145,7 +137,6 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
 
     assenti = set()
     servizi_speciali_assegnati = []
-    
     op_impegnati_mattina = set()
     op_impegnati_pomeriggio = set()
     
@@ -168,18 +159,14 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
         cel_servizio = pulisci_stringa(matrice_giorno[r, 7]) if num_colonne > 7 else ""
         cel_orario_grezzo = pulisci_stringa(matrice_giorno[r, 8]) if num_colonne > 8 else ""
 
-        # Aggiorna il servizio se presente (escludendo intestazioni)
         if cel_servizio and "SERVIZI COMANDATI" not in cel_servizio and "TIPO DI SERVIZIO" not in cel_servizio:
             servizio_corrente = cel_servizio
 
-        # Cerca se c'è un orario esplicito sulla riga (da Col I o Col H)
         orario_estratto = estrai_orario_da_stringhe(cel_servizio, cel_orario_grezzo)
         if orario_estratto:
             orario_corrente = orario_estratto
 
         operatore_effettivo = None
-        
-        # ScansioneColonne M, L, K, J (12 down to 9) per priorità sostituti
         for col_idx in [12, 11, 10, 9]:
             if num_colonne > col_idx:
                 val_op = pulisci_stringa(matrice_giorno[r, col_idx])
@@ -192,7 +179,6 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
         if operatore_effettivo:
             desc_servizio = servizio_corrente if servizio_corrente else "SERVIZIO SPECIALE"
             orario_effettivo = orario_corrente if orario_corrente else "07:00"
-            
             turno_op = classifica_turno_orario(orario_effettivo)
             
             if not any(item[0] == operatore_effettivo for item in servizi_speciali_assegnati):
@@ -213,6 +199,12 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
 def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
     ops = list(disponibili)
     df_s = df_stadera.copy()
+
+    # Gestione specifica ANGELINI L.: non fa PI e lavora da solo
+    angelini_presente = any("ANGELINI" in op for op in ops)
+    angelini_op = next((op for op in ops if "ANGELINI" in op), None)
+    if angelini_op:
+        ops.remove(angelini_op)
 
     ops_ordinati = sorted(ops, key=lambda x: df_s.loc[df_s["OPERATORE"] == x, "TOT_PI"].values[0] if x in df_s["OPERATORE"].values else 0)
 
@@ -250,6 +242,11 @@ def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
         pattuglie_pi.append({"servizio": f"Pronto Intervento ({orario})", "orario": orario, "componenti": [op1, op2]})
 
     altre_coppie = []
+    
+    # Se ANGELINI L. è disponibile, lo inseriamo subito come Pattuglia Singola
+    if angelini_op:
+        altre_coppie.append({"servizio": "Servizio Territorio Singolo / Supporto", "componenti": [angelini_op]})
+
     idx_pattuglia = 1
     random.shuffle(ops_ordinati)
     while len(ops_ordinati) >= 2:
