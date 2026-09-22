@@ -28,16 +28,11 @@ GRUPPO_B_REALE = [
 ORARI_PI_MATTINA = ["07:00", "07:00", "07:30", "08:00"]
 ORARI_PI_POMERIGGIO = ["13:00", "13:30", "14:00", "14:00"]
 
-def estrai_cognome_base(nome_completo):
-    pulisci = re.sub(r'[^A-Z]', '', nome_completo.upper())
-    return pulisci
-
 MAPPA_MEMBRI = {}
 for op in GRUPPO_A_REALE + GRUPPO_B_REALE:
     parti = op.upper().split()
     cognome_solido = re.sub(r'[^A-Z]', '', parti[0])
     stringa_intera = re.sub(r'[^A-Z]', '', op.upper())
-    
     if cognome_solido and len(cognome_solido) >= 3:
         MAPPA_MEMBRI[cognome_solido] = op
     if stringa_intera:
@@ -102,8 +97,14 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
 
     turno_a, turno_b = carica_anagrafica_turni()
 
-    target_str = pulisci_stringa(nome_foglio_giorno)
-    foglio_target = next((s for s in _CACHE_ODS.keys() if pulisci_stringa(s) == target_str), None)
+    target_clean = re.sub(r'[^0-9A-Z]', '', str(nome_foglio_giorno).upper())
+    
+    foglio_target = None
+    for k in _CACHE_ODS.keys():
+        k_clean = re.sub(r'[^0-9A-Z]', '', str(k).upper())
+        if target_clean == k_clean or target_clean in k_clean:
+            foglio_target = k
+            break
     
     if not foglio_target:
         return [], [], [], [], []
@@ -135,7 +136,7 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
     for r in range(num_righe):
         if num_colonne > 1:
             cel_b = pulisci_stringa(matrice_giorno[r, 1])
-            if cel_b and "FERIE" not in cel_b and "MALATTIE" not in cel_b:
+            if cel_b and "FERIE" not in cel_b and "MALATTIE" not in cel_b and "TURNO" not in cel_b:
                 match = trova_operatore_match(cel_b)
                 if match:
                     assenti.add(match)
@@ -148,17 +149,15 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
         cel_servizio = pulisci_stringa(matrice_giorno[r, 7]) if num_colonne > 7 else ""
         cel_orario = pulisci_stringa(matrice_giorno[r, 8]) if num_colonne > 8 else ""
 
-        # Aggiorna il Servizio se c'è un testo valido che non sia intestazione
         if cel_servizio and not any(k in cel_servizio for k in ["SERVIZI COMANDATI", "TIPO DI SERVIZIO"]):
             servizio_attuale = cel_servizio
 
-        # Aggiorna l'Orario se c'è un valore valido che non sia intestazione
         if cel_orario and "ORARIO" not in cel_orario:
             orario_attuale = cel_orario
 
         operatore_effettivo = None
         
-        # ScansioneColonne M, L, K, J (12 down to 9) per dare priorità al sostituto
+        # ScansioneColonne M, L, K, J (12 down to 9)
         for col_idx in [12, 11, 10, 9]:
             if num_colonne > col_idx:
                 val_op = pulisci_stringa(matrice_giorno[r, col_idx])
