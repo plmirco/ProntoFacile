@@ -214,7 +214,6 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
         for c in range(num_colonne):
             testo_cel = pulisci_stringa(matrice_giorno[r, c])
             
-            # Rilevazione distinta tipo reperibilità
             tipo_rep = None
             if ("REPERIB" in testo_cel or "REP" in testo_cel):
                 if " B" in testo_cel or "B" in testo_cel.split():
@@ -352,9 +351,14 @@ def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
     ops = list(disponibili)
     df_s = df_stadera.copy()
 
+    # OPERATORI ESCLUSI DALLA COPPIA (ANGELINI L. e SASSU B.)
     angelini_op = next((op for op in ops if "ANGELINI" in op), None)
     if angelini_op:
         ops.remove(angelini_op)
+
+    sassu_op = next((op for op in ops if "SASSU" in op), None)
+    if sassu_op:
+        ops.remove(sassu_op)
 
     fantazzini_op = next((op for op in ops if "FANTAZZINI" in op), None)
     if fantazzini_op:
@@ -376,6 +380,7 @@ def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
                 best_orario = orario
         return best_orario
 
+    # 1. FANTAZZINI G. (Priorità assoluta al PI + Partner casuale equilibrato)
     if fantazzini_op and ops and orari_disponibili:
         partner = seleziona_operatore_pesato(ops, df_s, operatore_riferimento=fantazzini_op)
         if partner:
@@ -384,6 +389,7 @@ def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
             orari_disponibili.remove(orario)
             pattuglie_pi.append({"servizio": f"Pronto Intervento ({orario})", "orario": orario, "componenti": [fantazzini_op, partner]})
 
+    # 2. ALTRI PRONTI INTERVENTO
     while orari_disponibili and len(ops) >= 2:
         op1 = seleziona_operatore_pesato(ops, df_s)
         if not op1:
@@ -400,9 +406,14 @@ def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
         orari_disponibili.remove(orario)
         pattuglie_pi.append({"servizio": f"Pronto Intervento ({orario})", "orario": orario, "componenti": [op1, op2]})
 
+    # 3. ALTRE PATTUGLIE TERRITORIO E SERVIZI SINGOLI
     altre_coppie = []
+    
     if angelini_op:
         altre_coppie.append({"servizio": "Servizio Territorio Singolo / Supporto", "componenti": [angelini_op]})
+
+    if sassu_op:
+        altre_coppie.append({"servizio": "Servizio Territorio Singolo / Supporto", "componenti": [sassu_op]})
 
     idx_pattuglia = 1
     random.shuffle(ops)
@@ -423,12 +434,13 @@ def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
             ops.insert(0, op1)
             break
 
+    # 4. GESTIONE SPAIATO: Aggregato come TERZO componente ad altre pattuglie (escludendo Angelini e Sassu)
     if ops:
         for spaiato in ops:
             assegnato = False
             for p in altre_coppie:
                 if "Pattuglia Territorio" in p["servizio"]:
-                    if not any("ANGELINI" in comp for comp in p["componenti"]):
+                    if not any(k in comp for comp in p["componenti"] for k in ["ANGELINI", "SASSU"]):
                         if not any(sono_incompatibili(spaiato, comp) for comp in p["componenti"]):
                             p["componenti"].append(spaiato)
                             assegnato = True
@@ -436,6 +448,7 @@ def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
             if not assegnato:
                 altre_coppie.append({"servizio": "Pattuglia Singola/Supporto", "componenti": [spaiato]})
 
+    # Aggiornamento Stadera
     for p in pattuglie_pi:
         orario = p["orario"]
         col_orario = f"PI_{orario}"
@@ -444,5 +457,7 @@ def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
                 df_s.loc[df_s["OPERATORE"] == comp, "TOT_PI"] += 1
                 if col_orario in df_s.columns:
                     df_s.loc[df_s["OPERATORE"] == comp, col_orario] += 1
+
+    return pattuglie_pi, altre_coppie, df_s
 
     return pattuglie_pi, altre_coppie, df_s
