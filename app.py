@@ -66,7 +66,7 @@ if file_ods is not None:
 
         for idx, g_str in enumerate(giorni_scelti):
             with tabs[idx]:
-                disp_m, disp_p, spec_m, spec_p, assenti, reperibili, richieste_part = estrai_dati_giorno(percorso_tmp, g_str)
+                disp_m, disp_p, spec_m, spec_p, assenti, rep_a, rep_b, richieste_part = estrai_dati_giorno(percorso_tmp, g_str)
 
                 # --- SEZIONE OVERRIDE MANUALE ---
                 st.subheader("🔄 Modifica Manuale Turni Operatori")
@@ -93,24 +93,32 @@ if file_ods is not None:
 
                 st.markdown("---")
 
-                # --- RIQUADRO REPERIBILITÀ E RICHIESTE ---
-                c_rep, c_req = st.columns(2)
+                # --- SEZIONE REPERIBILITÀ A, REPERIBILITÀ B E RICHIESTE ---
+                c_ra, c_rb, c_req = st.columns(3)
 
-                with c_rep:
-                    st.info("📞 **Operatori in Reperibilità (A e B):**")
-                    if reperibili:
-                        for op, tipo in reperibili:
-                            st.write(f"• **{op}**: {tipo}")
+                with c_ra:
+                    st.info("📞 **Reperibilità A:**")
+                    if rep_a:
+                        for op in rep_a:
+                            st.write(f"• **{op}**")
                     else:
-                        st.caption("Nessun operatore in reperibilità registrato.")
+                        st.caption("Nessuno in Reperibilità A.")
+
+                with c_rb:
+                    st.info("📞 **Reperibilità B:**")
+                    if rep_b:
+                        for op in rep_b:
+                            st.write(f"• **{op}**")
+                    else:
+                        st.caption("Nessuno in Reperibilità B.")
 
                 with c_req:
-                    st.subheader("📝 **Richieste Particolari Operatori:**")
+                    st.subheader("📝 **Richieste Particolari:**")
                     if richieste_part:
                         for op, nota in richieste_part:
                             st.write(f"• **{op}**: {nota}")
                     else:
-                        st.caption("Nessuna richiesta particolare per questo giorno.")
+                        st.caption("Nessuna richiesta particolare.")
 
                 st.warning(f"❌ **Operatori Assenti / Non Disponibili ({len(assenti)}):**")
                 if assenti:
