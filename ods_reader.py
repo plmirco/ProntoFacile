@@ -11,6 +11,7 @@ except ImportError:
 
 _CACHE_ODS = {}
 
+# ANAGRAFICA UFFICIALE RIGIDA (49 OPERATORI)
 GRUPPO_A_REALE = [
     "ANGELINI L.", "ARMAROLI", "ATTI", "BELLUZZI", "BINI", "BONZI", "BRUSA", 
     "BUTTAZZI", "CATANZARO", "COCCODA", "DEL VECCHIO", "FARNETI", "FORZANO", 
@@ -24,6 +25,9 @@ GRUPPO_B_REALE = [
     "GRAZIA M.", "MAIOLINO", "MANTEGNA", "MAVIGLIA", "MAZZINI", "PELUSI", 
     "PINCIO", "PROVENZANO", "SASSU B.", "SCHETTINO", "VACCARO", "VISANI"
 ]
+
+# LISTA AGENTI IN ADDESTRAMENTO (INCOMPATIBILI TRA LORO)
+AGENTI_ADDESTRAMENTO = ["VISANI", "PARADISO", "MANTEGNA", "MAZZINI", "ZAVARELLA"]
 
 ORARI_PI_MATTINA = ["07:00", "07:00", "07:30", "08:00"]
 ORARI_PI_POMERIGGIO = ["13:00", "13:30", "14:00", "14:00"]
@@ -169,7 +173,7 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
             break
     
     if not foglio_target:
-        return [], [], [], [], []
+        return [], [], [], [], [], []
 
     df_giorno = _CACHE_ODS[foglio_target]
     matrice_giorno = df_giorno.to_numpy()
@@ -187,16 +191,26 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
 
     assenti = set()
     servizi_speciali_assegnati = []
+    reperibili = []
+    
     op_impegnati_mattina = set()
     op_impegnati_pomeriggio = set()
     
     num_righe, num_colonne = matrice_giorno.shape
 
-    # 1. Assenti
+    # 1. Scansione Assenti e Reperibilità in Colonna B / Matrice
     for r in range(num_righe):
         if num_colonne > 1:
             cel_b = pulisci_stringa(matrice_giorno[r, 1])
-            if cel_b and "FERIE" not in cel_b and "MALATTIE" not in cel_b and "TURNO" not in cel_b:
+            
+            if cel_b and "REPERIBILIT" in cel_b:
+                for col_idx in range(1, min(13, num_colonne)):
+                    val_c = pulisci_stringa(matrice_giorno[r, col_idx])
+                    match_rep = trova_operatore_match(val_c)
+                    if match_rep and match_rep not in [item[0] for item in reperibili]:
+                        tipo_rep = "REPERIBILITÀ A" if "A" in cel_b else "REPERIBILITÀ B"
+                        reperibili.append((match_rep, tipo_rep))
+            elif cel_b and "FERIE" not in cel_b and "MALATTIE" not in cel_b and "TURNO" not in cel_b:
                 match = trova_operatore_match(cel_b)
                 if match:
                     assenti.add(match)
@@ -229,16 +243,21 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
         if operatore_effettivo:
             desc_servizio = servizio_corrente if servizio_corrente else "SERVIZIO SPECIALE"
             orario_effettivo = orario_corrente if orario_corrente else "07:00"
-            turno_op = classifica_turno_orario(orario_effettivo)
             
-            if not any(item[0] == operatore_effettivo for item in servizi_speciali_assegnati):
-                servizi_speciali_assegnati.append((operatore_effettivo, desc_servizio, orario_effettivo, turno_op))
-                if turno_op == "MATTINA":
-                    op_impegnati_mattina.add(operatore_effettivo)
-                else:
-                    op_impegnati_pomeriggio.add(operatore_effettivo)
+            if "REPERIBIL" in desc_servizio:
+                if operatore_effettivo not in [item[0] for item in reperibili]:
+                    tipo_rep = "REPERIBILITÀ A" if "A" in desc_servizio else "REPERIBILITÀ B"
+                    reperibili.append((operatore_effettivo, tipo_rep))
+            else:
+                turno_op = classifica_turno_orario(orario_effettivo)
+                if not any(item[0] == operatore_effettivo for item in servizi_speciali_assegnati):
+                    servizi_speciali_assegnati.append((operatore_effettivo, desc_servizio, orario_effettivo, turno_op))
+                    if turno_op == "MATTINA":
+                        op_impegnati_mattina.add(operatore_effettivo)
+                    else:
+                        op_impegnati_pomeriggio.add(operatore_effettivo)
 
-    # 3. Controllo Notte Giorno Successivo (Spostamento Automatico in Mattina)
+    # 3. Controllo Notte Giorno Successivo
     try:
         giorno_num = int(re.sub(r'\D', '', str(nome_foglio_giorno)))
         giorno_succ_str = str(giorno_num + 1)
@@ -258,7 +277,11 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
     spec_m = [item for item in servizi_speciali_assegnati if item[3] == "MATTINA"]
     spec_p = [item for item in servizi_speciali_assegnati if item[3] == "POMERIGGIO"]
 
-    return disp_mattina, disp_pomeriggio, spec_m, spec_p, sorted(list(assenti))
+    return disp_mattina, disp_pomeriggio, spec_m, spec_p, sorted(list(assenti)), reperibili
+
+def e_addestramento(op_nome):
+    """Verifica se l'operatore appartiene alla lista agenti in addestramento."""
+    return any(cad in op_nome.upper() for cad in AGENTI_ADDESTRAMENTO)
 
 def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
     ops = list(disponibili)
@@ -290,40 +313,78 @@ def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
                 best_orario = orario
         return best_orario
 
+    # FANTAZZINI + Partner (con controllo incompatibilità)
     if fantazzini_op and ops_ordinati:
-        partner = ops_ordinati.pop(0)
-        orario = scegli_orario_equo(fantazzini_op, partner, orari_disponibili)
-        orari_disponibili.remove(orario)
-        pattuglie_pi.append({"servizio": f"Pronto Intervento ({orario})", "orario": orario, "componenti": [fantazzini_op, partner]})
+        partner_idx = None
+        for i, candidato in enumerate(ops_ordinati):
+            if not (e_addestramento(fantazzini_op) and e_addestramento(candidato)):
+                partner_idx = i
+                break
+        
+        if partner_idx is not None:
+            partner = ops_ordinati.pop(partner_idx)
+            orario = scegli_orario_equo(fantazzini_op, partner, orari_disponibili)
+            orari_disponibili.remove(orario)
+            pattuglie_pi.append({"servizio": f"Pronto Intervento ({orario})", "orario": orario, "componenti": [fantazzini_op, partner]})
 
+    # ALTRI PRONTI INTERVENTO (con controllo incompatibilità)
     while orari_disponibili and len(ops_ordinati) >= 2:
         op1 = ops_ordinati.pop(0)
-        op2 = ops_ordinati.pop(0)
-        orario = scegli_orario_equo(op1, op2, orari_disponibili)
-        orari_disponibili.remove(orario)
-        pattuglie_pi.append({"servizio": f"Pronto Intervento ({orario})", "orario": orario, "componenti": [op1, op2]})
+        op2_idx = None
+        
+        for i, op2_cand in enumerate(ops_ordinati):
+            if not (e_addestramento(op1) and e_addestramento(op2_cand)):
+                op2_idx = i
+                break
+                
+        if op2_idx is not None:
+            op2 = ops_ordinati.pop(op2_idx)
+            orario = scegli_orario_equo(op1, op2, orari_disponibili)
+            orari_disponibili.remove(orario)
+            pattuglie_pi.append({"servizio": f"Pronto Intervento ({orario})", "orario": orario, "componenti": [op1, op2]})
+        else:
+            ops_ordinati.insert(0, op1)
+            break
 
+    # ALTRE PATTUGLIE TERRITORIO (con controllo incompatibilità)
     altre_coppie = []
     if angelini_op:
         altre_coppie.append({"servizio": "Servizio Territorio Singolo / Supporto", "componenti": [angelini_op]})
 
     idx_pattuglia = 1
     random.shuffle(ops_ordinati)
+    
     while len(ops_ordinati) >= 2:
         op1 = ops_ordinati.pop(0)
-        op2 = ops_ordinati.pop(0)
-        altre_coppie.append({"servizio": f"Pattuglia Territorio {idx_pattuglia}", "componenti": [op1, op2]})
-        idx_pattuglia += 1
-
-    if ops_ordinati:
-        spaiato = ops_ordinati.pop(0)
-        if altre_coppie:
-            altre_coppie[-1]["componenti"].append(spaiato)
-        elif pattuglie_pi:
-            pattuglie_pi[0]["componenti"].append(spaiato)
+        op2_idx = None
+        
+        for i, op2_cand in enumerate(ops_ordinati):
+            if not (e_addestramento(op1) and e_addestramento(op2_cand)):
+                op2_idx = i
+                break
+                
+        if op2_idx is not None:
+            op2 = ops_ordinati.pop(op2_idx)
+            altre_coppie.append({"servizio": f"Pattuglia Territorio {idx_pattuglia}", "componenti": [op1, op2]})
+            idx_pattuglia += 1
         else:
-            altre_coppie.append({"servizio": "Pattuglia Singola/Supporto", "componenti": [spaiato]})
+            ops_ordinati.insert(0, op1)
+            break
 
+    # Aggregazione spaiati senza violare la regola dell'addestramento
+    if ops_ordinati:
+        for spaiato in ops_ordinati:
+            assegnato = False
+            if e_addestramento(spaiato):
+                for p in altre_coppie:
+                    if not any(e_addestramento(comp) for comp in p["componenti"]):
+                        p["componenti"].append(spaiato)
+                        assegnato = True
+                        break
+            if not assegnato:
+                altre_coppie.append({"servizio": "Pattuglia Singola/Supporto", "componenti": [spaiato]})
+
+    # Aggiornamento Stadera
     for p in pattuglie_pi:
         orario = p["orario"]
         col_orario = f"PI_{orario}"
