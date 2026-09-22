@@ -48,7 +48,7 @@ def pulisci_stringa(valore):
     if pd.isna(valore):
         return ""
     val_str = str(valore).strip().upper()
-    return "" if val_str == "NAN" else val_str
+    return "" if val_str in ["NAN", "NONE", "UNNAMED"] else val_str
 
 def carica_anagrafica_turni(percorso_ods=None):
     return list(GRUPPO_A_REALE), list(GRUPPO_B_REALE)
@@ -63,15 +63,13 @@ def trova_operatore_match(testo_cella):
             return MAPPA_MEMBRI[p]
     return None
 
-def classifica_turno_orario(orario_str, squadra_mattina):
+def classifica_turno_orario(orario_str):
     """
-    Classifica il turno basandosi prima sull'orario estretto,
-    e come ripiego tollerante sulla presenza dell'orario.
+    Classifica MATTINA/NOTTE (22-08) o POMERIGGIO (12-21) estraendo il primo numero d'ora.
     """
     if not orario_str:
         return "MATTINA"
     
-    # Cerca il primo numero che rappresenti un'ora (es. 22, 1, 13, 14, 07, ecc.)
     numeri = re.findall(r'\b\d{1,2}\b', orario_str)
     if numeri:
         ora = int(numeri[0])
@@ -85,9 +83,7 @@ def classifica_turno_orario(orario_str, squadra_mattina):
 def crea_stadera_vuota():
     tutti_ops = GRUPPO_A_REALE + GRUPPO_B_REALE
     colonne = ["OPERATORE", "TOT_PI", "PI_07:00", "PI_07:30", "PI_08:00", "PI_13:00", "PI_13:30", "PI_14:00"]
-    dati = []
-    for op in tutti_ops:
-        dati.append([op, 0, 0, 0, 0, 0, 0, 0])
+    dati = [[op, 0, 0, 0, 0, 0, 0, 0] for op in tutti_ops]
     return pd.DataFrame(dati, columns=colonne)
 
 def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
@@ -106,7 +102,7 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
     df_giorno = _CACHE_ODS[foglio_target]
     matrice_giorno = df_giorno.to_numpy()
 
-    # Determinazione Turno Montante da Cella B2
+    # Determinazione Squadra Montante
     indicatore_b2 = ""
     if matrice_giorno.shape[0] > 0 and matrice_giorno.shape[1] > 1:
         indicatore_b2 = pulisci_stringa(matrice_giorno[0, 1])
@@ -135,50 +131,46 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
                     assenti.add(match)
 
     # 2. Scansione Servizi Particolari (Colonne H-M / Indici 7-12)
-    servizio_attuale = ""
-    orario_attuale = ""
+    servizio_corrente = ""
+    orario_corrente = ""
 
     for r in range(num_righe):
-        cel_servizio = pulisci_stringa(matrice_giorno[r, 7]) if num_colonne > 7 else ""
-        cel_orario = pulisci_stringa(matrice_giorno[r, 8]) if num_colonne > 8 else ""
+        val_h = pulisci_stringa(matrice_giorno[r, 7]) if num_colonne > 7 else ""
+        val_i = pulisci_stringa(matrice_giorno[r, 8]) if num_colonne > 8 else ""
 
-        # Mantieni o aggiorna servizio e orario
-        if cel_servizio and "SERVIZIO" not in cel_servizio:
-            servizio_attuale = cel_servizio
+        # Se troviamo un nome di servizio valido in H (escludendo intestazioni)
+        if val_h and "SERVIZIO" not in val_h and "ORARIO" not in val_h and "PATTUGLIA" not in val_h:
+            servizio_corrente = val_h
 
-        if cel_orario:
-            orario_attuale = cel_orario
+        # Se troviamo un orario in I
+        if val_i and "ORARIO" not in val_i:
+            orario_corrente = val_i
 
-        # Cerca l'operatore nelle colonne M, L, K, J (dando priorità ai sostituti a destra)
-        operatore_effettivo = None
-        for col_idx in [12, 11, 10, 9]:
-            if num_colonne > col_idx:
-                val_op = pulisci_stringa(matrice_giorno[r, col_idx])
-                if val_op:
-                    match = trova_operatore_match(val_op)
-                    if match:
-                        operatore_effettivo = match
-                        break
+        # Cerca un operatore sulla riga corrente (da M verso J per gestire sostituzioni)
+        operatore_trovato = None
+        for col_idx in range(min(12, num_colonne - 1), 8, -1):
+            val_cell = pulisci_stringa(matrice_giorno[r, col_idx])
+            if val_cell:
+                match = trova_operatore_match(val_cell)
+                if match:
+                    operatore_trovato = match
+                    break
 
-        if operatore_effettivo:
-            # Determina la fascia oraria del servizio
-            turno_op = classifica_turno_orario(orario_attuale, squadra_mattina)
+        # Se abbiamo trovato un operatore, lo registriamo con il servizio corrente
+        if operatore_trovato:
+            desc_servizio = servizio_corrente if servizio_corrente else "SERVIZIO SPECIALE"
+            turno_op = classifica_turno_orario(orario_corrente)
             
-            nome_servizio_mostrato = servizio_attuale if servizio_attuale else "SERVIZIO SPECIALE"
-            servizi_speciali_assegnati.append((operatore_effettivo, nome_servizio_mostrato, orario_attuale, turno_op))
-            
-            if turno_op == "MATTINA":
-                op_impegnati_mattina.add(operatore_effettivo)
-            else:
-                op_impegnati_pomeriggio.add(operatore_effettivo)
-        else:
-            # Reset se la riga è completamente vuota
-            riga_vuota_operatori = not any(pulisci_stringa(matrice_giorno[r, c]) for c in range(9, min(13, num_colonne)))
-            if riga_vuota_operatori and not cel_servizio:
-                servizio_attuale = ""
-                orario_attuale = ""
+            # Evitiamo duplicati se lo stesso agente appare più volte sulla stessa riga
+            if not any(item[0] == operatore_trovato for item in servizi_speciali_assegnati):
+                servizi_speciali_assegnati.append((operatore_trovato, desc_servizio, orario_corrente, turno_op))
+                
+                if turno_op == "MATTINA":
+                    op_impegnati_mattina.add(operatore_trovato)
+                else:
+                    op_impegnati_pomeriggio.add(operatore_trovato)
 
-    # Calcolo disponibilità reali per turno
+    # Calcolo disponibilità nette
     disp_mattina = [op for op in squadra_mattina if op not in assenti and op not in OPERATORI_ESCLUSI_SEMPRE and op not in op_impegnati_mattina]
     disp_pomeriggio = [op for op in squadra_pomeriggio if op not in assenti and op not in OPERATORI_ESCLUSI_SEMPRE and op not in op_impegnati_pomeriggio]
 
