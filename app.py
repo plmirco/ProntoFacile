@@ -58,7 +58,7 @@ if file_ods is not None:
         giorni_scelti = st.sidebar.multiselect(
             "Seleziona giorni:",
             options=tutti_giorni,
-            default=["17"]
+            default=["10"]
         )
 
     if giorni_scelti:
@@ -66,12 +66,11 @@ if file_ods is not None:
 
         for idx, g_str in enumerate(giorni_scelti):
             with tabs[idx]:
-                disp_m, disp_p, spec_m, spec_p, assenti = estrai_dati_giorno(percorso_tmp, g_str)
+                disp_m, disp_p, spec_m, spec_p, assenti, reperibili = estrai_dati_giorno(percorso_tmp, g_str)
 
                 # --- SEZIONE OVERRIDE MANUALE ---
                 st.subheader("🔄 Modifica Manuale Turni Operatori")
                 col_ov1, col_ov2 = st.columns(2)
-                
                 tutti_ops = sorted(GRUPPO_A_REALE + GRUPPO_B_REALE)
                 
                 with col_ov1:
@@ -93,6 +92,14 @@ if file_ods is not None:
                     st.success(f"Operatore {op_da_spostare} spostato nel turno di {nuovo_turno}!")
 
                 st.markdown("---")
+
+                # --- RIQUADRO REPERIBILITÀ ---
+                st.info("📞 **Operatori in Reperibilità (A e B):**")
+                if reperibili:
+                    elenco_rep = [f"• **{op}**: {tipo}" for op, tipo in reperibili]
+                    st.write(" | ".join(elenco_rep))
+                else:
+                    st.caption("Nessun operatore in reperibilità registrato per questo giorno.")
 
                 st.warning(f"❌ **Operatori Assenti / Non Disponibili ({len(assenti)}):**")
                 if assenti:
