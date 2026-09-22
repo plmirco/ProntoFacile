@@ -173,7 +173,7 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
             break
     
     if not foglio_target:
-        return [], [], [], [], [], [], []
+        return [], [], [], [], [], [], [], []
 
     df_giorno = _CACHE_ODS[foglio_target]
     matrice_giorno = df_giorno.to_numpy()
@@ -191,7 +191,8 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
 
     assenti = set()
     servizi_speciali_assegnati = []
-    reperibili = []
+    reperibili_a = []
+    reperibili_b = []
     richieste_particolari = []
     
     op_impegnati_mattina = set()
@@ -199,7 +200,7 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
     
     num_righe, num_colonne = matrice_giorno.shape
 
-    # 1. Scansione Assenti
+    # 1. Scansione Assenti in Colonna B
     for r in range(num_righe):
         if num_colonne > 1:
             cel_b = pulisci_stringa(matrice_giorno[r, 1])
@@ -208,12 +209,20 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
                 if match_ass:
                     assenti.add(match_ass)
 
-    # 2. Scansione Reperibilità
+    # 2. Scansione Distinta per Reperibilità A e Reperibilità B
     for r in range(num_righe):
         for c in range(num_colonne):
             testo_cel = pulisci_stringa(matrice_giorno[r, c])
-            if "REPERIB" in testo_cel or "REP." in testo_cel or "REP " in testo_cel:
-                tipo_rep = "REPERIBILITÀ B" if "B" in testo_cel else "REPERIBILITÀ A"
+            
+            # Rilevazione distinta tipo reperibilità
+            tipo_rep = None
+            if ("REPERIB" in testo_cel or "REP" in testo_cel):
+                if " B" in testo_cel or "B" in testo_cel.split():
+                    tipo_rep = "B"
+                elif " A" in testo_cel or "A" in testo_cel.split() or "REPERIBILITA" in testo_cel or "REPERIBILITÀ" in testo_cel:
+                    tipo_rep = "A"
+
+            if tipo_rep:
                 for offset_r in range(0, 15):
                     for offset_c in range(0, 3):
                         r_chk = r + offset_r
@@ -221,10 +230,13 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
                         if r_chk < num_righe and c_chk < num_colonne:
                             val_chk = pulisci_stringa(matrice_giorno[r_chk, c_chk])
                             match_op = trova_operatore_match(val_chk)
-                            if match_op and not any(item[0] == match_op for item in reperibili):
-                                reperibili.append((match_op, tipo_rep))
+                            if match_op:
+                                if tipo_rep == "A" and match_op not in reperibili_a and match_op not in reperibili_b:
+                                    reperibili_a.append(match_op)
+                                elif tipo_rep == "B" and match_op not in reperibili_b and match_op not in reperibili_a:
+                                    reperibili_b.append(match_op)
 
-    # 3. Scansione Richieste Particolari
+    # 3. Scansione Richieste Particolari Operatori
     for r in range(num_righe):
         for c in range(num_colonne):
             testo_cel = pulisci_stringa(matrice_giorno[r, c])
@@ -301,7 +313,7 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
     spec_m = [item for item in servizi_speciali_assegnati if item[3] == "MATTINA"]
     spec_p = [item for item in servizi_speciali_assegnati if item[3] == "POMERIGGIO"]
 
-    return disp_mattina, disp_pomeriggio, spec_m, spec_p, sorted(list(assenti)), reperibili, richieste_particolari
+    return disp_mattina, disp_pomeriggio, spec_m, spec_p, sorted(list(assenti)), reperibili_a, reperibili_b, richieste_particolari
 
 def e_addestramento(op_nome):
     return any(cad in op_nome.upper() for cad in AGENTI_ADDESTRAMENTO)
@@ -316,7 +328,6 @@ def sono_incompatibili(op1, op2):
     return False
 
 def seleziona_operatore_pesato(lista_candidati, df_s, operatore_riferimento=None):
-    """Seleziona un operatore in modo casuale ma favorendo chi ha MENO servizi PI svolti."""
     candidati_validi = []
     for op in lista_candidati:
         if operatore_riferimento and sono_incompatibili(operatore_riferimento, op):
@@ -326,14 +337,12 @@ def seleziona_operatore_pesato(lista_candidati, df_s, operatore_riferimento=None
     if not candidati_validi:
         return None
 
-    # Estrae il punteggio PI dalla Stadera per ciascun candidato
     punteggi = []
     for op in candidati_validi:
         tot = df_s.loc[df_s["OPERATORE"] == op, "TOT_PI"].values[0] if op in df_s["OPERATORE"].values else 0
         punteggi.append(tot)
 
     max_p = max(punteggi) if punteggi else 0
-    # Inverte i pesi: chi ha meno PI ottiene un peso probabilistico più alto
     pesi = [(max_p - p + 1) ** 2 for p in punteggi]
     
     scelto = random.choices(candidati_validi, weights=pesi, k=1)[0]
@@ -343,7 +352,6 @@ def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
     ops = list(disponibili)
     df_s = df_stadera.copy()
 
-    # ANGELINI L. isolato a monte per servizio singolo esclusivo
     angelini_op = next((op for op in ops if "ANGELINI" in op), None)
     if angelini_op:
         ops.remove(angelini_op)
@@ -368,7 +376,6 @@ def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
                 best_orario = orario
         return best_orario
 
-    # 1. FANTAZZINI G. (Priorità assoluta al PI + Partner casuale equilibrato)
     if fantazzini_op and ops and orari_disponibili:
         partner = seleziona_operatore_pesato(ops, df_s, operatore_riferimento=fantazzini_op)
         if partner:
@@ -377,7 +384,6 @@ def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
             orari_disponibili.remove(orario)
             pattuglie_pi.append({"servizio": f"Pronto Intervento ({orario})", "orario": orario, "componenti": [fantazzini_op, partner]})
 
-    # 2. ALTRI PRONTI INTERVENTO (Selezione Pesata Casuale per Equilibrio Stadera)
     while orari_disponibili and len(ops) >= 2:
         op1 = seleziona_operatore_pesato(ops, df_s)
         if not op1:
@@ -394,7 +400,6 @@ def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
         orari_disponibili.remove(orario)
         pattuglie_pi.append({"servizio": f"Pronto Intervento ({orario})", "orario": orario, "componenti": [op1, op2]})
 
-    # 3. ALTRE PATTUGLIE TERRITORIO (Randomizzazione totale)
     altre_coppie = []
     if angelini_op:
         altre_coppie.append({"servizio": "Servizio Territorio Singolo / Supporto", "componenti": [angelini_op]})
@@ -418,7 +423,6 @@ def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
             ops.insert(0, op1)
             break
 
-    # 4. GESTIONE SPAIATO: Aggregato come TERZO componente a una Pattuglia Territorio
     if ops:
         for spaiato in ops:
             assegnato = False
@@ -432,7 +436,6 @@ def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
             if not assegnato:
                 altre_coppie.append({"servizio": "Pattuglia Singola/Supporto", "componenti": [spaiato]})
 
-    # Aggiornamento Stadera
     for p in pattuglie_pi:
         orario = p["orario"]
         col_orario = f"PI_{orario}"
