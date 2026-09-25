@@ -103,7 +103,8 @@ def crea_stadera_vuota():
     dati = [[op, 0, 0, 0, 0, 0, 0, 0] for op in tutti_ops]
     return pd.DataFrame(dati, columns=colonne)
 
-def ottieni_operatori_notturni_giorno(percorso_ods, giorno_target_str):
+def ottieni_operatori_serali_notturni_giorno(percorso_ods, giorno_target_str):
+    """Restituisce gli operatori che fanno servizio di notte (dalle 22) o di sera (dalle 19)."""
     global _CACHE_ODS
     if not _CACHE_ODS:
         inizializza_cache_ods(percorso_ods)
@@ -117,12 +118,13 @@ def ottieni_operatori_notturni_giorno(percorso_ods, giorno_target_str):
             break
             
     if not foglio_target:
-        return set()
+        return set(), set()
 
     df_giorno = _CACHE_ODS[foglio_target]
     matrice = df_giorno.to_numpy()
     num_righe, num_colonne = matrice.shape
     ops_notte = set()
+    ops_sera = set()
 
     servizio_corrente = ""
     orario_corrente = ""
@@ -154,8 +156,10 @@ def ottieni_operatori_notturni_giorno(percorso_ods, giorno_target_str):
                 ora = int(numeri[0])
                 if ora >= 22 or ora <= 2:
                     ops_notte.add(operatore_effettivo)
+                if ora >= 19 or ora <= 2:
+                    ops_sera.add(operatore_effettivo)
 
-    return ops_notte
+    return ops_notte, ops_sera
 
 def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
     global _CACHE_ODS
@@ -209,7 +213,7 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
                 if match_ass:
                     assenti.add(match_ass)
 
-    # 2. Scansione Distinta per Reperibilità A e Reperibilità B
+    # 2. Scansione Reperibilità
     for r in range(num_righe):
         for c in range(num_colonne):
             testo_cel = pulisci_stringa(matrice_giorno[r, c])
@@ -235,7 +239,7 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
                                 elif tipo_rep == "B" and match_op not in reperibili_b and match_op not in reperibili_a:
                                     reperibili_b.append(match_op)
 
-    # 3. Scansione Richieste Particolari Operatori
+    # 3. Scansione Richieste Particolari
     for r in range(num_righe):
         for c in range(num_colonne):
             testo_cel = pulisci_stringa(matrice_giorno[r, c])
@@ -292,17 +296,32 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
                 else:
                     op_impegnati_pomeriggio.add(operatore_effettivo)
 
-    # 5. Controllo Notte Giorno Successivo
+    # 5. REGOLA NOTTE DOMANI -> SPOSTA IN MATTINA OGGI
     try:
         giorno_num = int(re.sub(r'\D', '', str(nome_foglio_giorno)))
         giorno_succ_str = str(giorno_num + 1)
-        ops_notte_domani = ottieni_operatori_notturni_giorno(percorso_ods, giorno_succ_str)
+        ops_notte_domani, _ = ottieni_operatori_serali_notturni_giorno(percorso_ods, giorno_succ_str)
         
         for op in ops_notte_domani:
             if op in squadra_pomeriggio and op not in assenti and op not in op_impegnati_pomeriggio:
                 squadra_pomeriggio.remove(op)
                 if op not in squadra_mattina:
                     squadra_mattina.append(op)
+    except Exception:
+        pass
+
+    # 6. REGOLA SERA/NOTTE IERI -> SPOSTA IN POMERIGGIO OGGI (RIPOSO 11 ORE)
+    try:
+        giorno_num = int(re.sub(r'\D', '', str(nome_foglio_giorno)))
+        if giorno_num > 1:
+            giorno_prec_str = str(giorno_num - 1)
+            _, ops_sera_ieri = ottieni_operatori_serali_notturni_giorno(percorso_ods, giorno_prec_str)
+            
+            for op in ops_sera_ieri:
+                if op in squadra_mattina and op not in assenti and op not in op_impegnati_mattina:
+                    squadra_mattina.remove(op)
+                    if op not in squadra_pomeriggio:
+                        squadra_pomeriggio.append(op)
     except Exception:
         pass
 
@@ -351,7 +370,6 @@ def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
     ops = list(disponibili)
     df_s = df_stadera.copy()
 
-    # OPERATORI ESCLUSI DALLA COPPIA (ANGELINI L. e SASSU B.)
     angelini_op = next((op for op in ops if "ANGELINI" in op), None)
     if angelini_op:
         ops.remove(angelini_op)
@@ -380,7 +398,6 @@ def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
                 best_orario = orario
         return best_orario
 
-    # 1. FANTAZZINI G. (Priorità assoluta al PI + Partner casuale equilibrato)
     if fantazzini_op and ops and orari_disponibili:
         partner = seleziona_operatore_pesato(ops, df_s, operatore_riferimento=fantazzini_op)
         if partner:
@@ -389,7 +406,6 @@ def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
             orari_disponibili.remove(orario)
             pattuglie_pi.append({"servizio": f"Pronto Intervento ({orario})", "orario": orario, "componenti": [fantazzini_op, partner]})
 
-    # 2. ALTRI PRONTI INTERVENTO
     while orari_disponibili and len(ops) >= 2:
         op1 = seleziona_operatore_pesato(ops, df_s)
         if not op1:
@@ -406,7 +422,6 @@ def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
         orari_disponibili.remove(orario)
         pattuglie_pi.append({"servizio": f"Pronto Intervento ({orario})", "orario": orario, "componenti": [op1, op2]})
 
-    # 3. ALTRE PATTUGLIE TERRITORIO E SERVIZI SINGOLI
     altre_coppie = []
     
     if angelini_op:
@@ -434,7 +449,6 @@ def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
             ops.insert(0, op1)
             break
 
-    # 4. GESTIONE SPAIATO: Aggregato come TERZO componente ad altre pattuglie (escludendo Angelini e Sassu)
     if ops:
         for spaiato in ops:
             assegnato = False
@@ -448,7 +462,6 @@ def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
             if not assegnato:
                 altre_coppie.append({"servizio": "Pattuglia Singola/Supporto", "componenti": [spaiato]})
 
-    # Aggiornamento Stadera
     for p in pattuglie_pi:
         orario = p["orario"]
         col_orario = f"PI_{orario}"
