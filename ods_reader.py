@@ -459,5 +459,3 @@ def genera_coppie_pi_con_stadera(disponibili, df_stadera, turno="MATTINA"):
                     df_s.loc[df_s["OPERATORE"] == comp, col_orario] += 1
 
     return pattuglie_pi, altre_coppie, df_s
-
-    return pattuglie_pi, altre_coppie, df_s
