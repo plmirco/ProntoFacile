@@ -104,7 +104,7 @@ def crea_stadera_vuota():
     return pd.DataFrame(dati, columns=colonne)
 
 def ottieni_operatori_serali_notturni_giorno(percorso_ods, giorno_target_str):
-    """Restituisce gli operatori che fanno servizio di notte (dalle 22) o di sera (dalle 19)."""
+    """Restituisce gli operatori che fanno servizio di notte (dalle 22) o di sera (dalle 18:00)."""
     global _CACHE_ODS
     if not _CACHE_ODS:
         inizializza_cache_ods(percorso_ods)
@@ -156,7 +156,7 @@ def ottieni_operatori_serali_notturni_giorno(percorso_ods, giorno_target_str):
                 ora = int(numeri[0])
                 if ora >= 22 or ora <= 2:
                     ops_notte.add(operatore_effettivo)
-                if ora >= 19 or ora <= 2:
+                if ora >= 18 or ora <= 2:
                     ops_sera.add(operatore_effettivo)
 
     return ops_notte, ops_sera
@@ -213,7 +213,7 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
                 if match_ass:
                     assenti.add(match_ass)
 
-    # 2. Scansione Reperibilità
+    # 2. Scansione Distinta per Reperibilità A e Reperibilità B
     for r in range(num_righe):
         for c in range(num_colonne):
             testo_cel = pulisci_stringa(matrice_giorno[r, c])
@@ -239,7 +239,7 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
                                 elif tipo_rep == "B" and match_op not in reperibili_b and match_op not in reperibili_a:
                                     reperibili_b.append(match_op)
 
-    # 3. Scansione Richieste Particolari
+    # 3. Scansione Richieste Particolari Operatori
     for r in range(num_righe):
         for c in range(num_colonne):
             testo_cel = pulisci_stringa(matrice_giorno[r, c])
@@ -310,7 +310,7 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
     except Exception:
         pass
 
-    # 6. REGOLA SERA/NOTTE IERI -> SPOSTA IN POMERIGGIO OGGI (RIPOSO 11 ORE)
+    # 6. REGOLA SERA/NOTTE IERI (>= 18:00) -> SPOSTA IN POMERIGGIO OGGI (RIPOSO DI LEGGE)
     try:
         giorno_num = int(re.sub(r'\D', '', str(nome_foglio_giorno)))
         if giorno_num > 1:
