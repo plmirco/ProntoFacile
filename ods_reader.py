@@ -199,7 +199,7 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
     reperibili_b = []
     richieste_particolari = []
     
-    op_impegnati = set() # Set universale per tracciare gli operatori con servizi speciali del giorno
+    op_impegnati = set()
     
     num_righe, num_colonne = matrice_giorno.shape
 
@@ -257,7 +257,7 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
                             if not any(item[0] == match_op for item in richieste_particolari):
                                 richieste_particolari.append((match_op, nota_testo))
 
-    # 4. Scansione Servizi Particolari / Comandati (Stadio, Tutor, Mercato, Notte, ecc.)
+    # 4. Scansione Servizi Particolari / Comandati
     servizio_corrente = ""
     orario_corrente = ""
 
@@ -289,7 +289,7 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
             
             if not any(item[0] == operatore_effettivo for item in servizi_speciali_assegnati):
                 servizi_speciali_assegnati.append((operatore_effettivo, desc_servizio, orario_effettivo, turno_op))
-                op_impegnati.add(operatore_effettivo) # ESCLUSIONE immediata dai disponibili diurni
+                op_impegnati.add(operatore_effettivo)
 
     # 5. REGOLA SPECIALE PROTEZIONE CIVILE PER MOLINI E BUTTAZZI (Martedì o Mercoledì)
     try:
@@ -313,7 +313,7 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
     # 6. REGOLA NOTTE OGGI -> ESCLUSIONE DALLO STESSO GIORNO
     ops_notte_oggi, _ = ottieni_operatori_serali_notturni_giorno(percorso_ods, nome_foglio_giorno)
     for op in ops_notte_oggi:
-        op_impegnati.add(op) # Garantisce che chi fa Notte OGGI non sia MAI nei disponibili diurni
+        op_impegnati.add(op)
 
     # 7. REGOLA NOTTE DOMANI -> SPOSTA IN MATTINA OGGI
     try:
@@ -344,7 +344,6 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
     except Exception:
         pass
 
-    # ESCLUSIONE RIGIDA: Tutti gli operatori in op_impegnati (inclusi quelli di Notte) vengono TOLTI dai disponibili ordinari
     disp_mattina = [op for op in squadra_mattina if op not in assenti and op not in OPERATORI_ESCLUSI_SEMPRE and op not in op_impegnati]
     disp_pomeriggio = [op for op in squadra_pomeriggio if op not in assenti and op not in OPERATORI_ESCLUSI_SEMPRE and op not in op_impegnati]
 
