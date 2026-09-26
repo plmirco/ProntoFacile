@@ -213,11 +213,10 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
                 if match_ass:
                     assenti.add(match_ass)
 
-    # 2. Scansione Distinta per Reperibilità A e Reperibilità B
+    # 2. Scansione Reperibilità
     for r in range(num_righe):
         for c in range(num_colonne):
             testo_cel = pulisci_stringa(matrice_giorno[r, c])
-            
             tipo_rep = None
             if ("REPERIB" in testo_cel or "REP" in testo_cel):
                 if " B" in testo_cel or "B" in testo_cel.split():
@@ -239,7 +238,7 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
                                 elif tipo_rep == "B" and match_op not in reperibili_b and match_op not in reperibili_a:
                                     reperibili_b.append(match_op)
 
-    # 3. Scansione Richieste Particolari Operatori
+    # 3. Scansione Richieste Particolari
     for r in range(num_righe):
         for c in range(num_colonne):
             testo_cel = pulisci_stringa(matrice_giorno[r, c])
@@ -296,7 +295,33 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
                 else:
                     op_impegnati_pomeriggio.add(operatore_effettivo)
 
-    # 5. REGOLA NOTTE DOMANI -> SPOSTA IN MATTINA OGGI
+    # 5. REGOLA SPECIALE PROTEZIONE CIVILE PER MOLINI E BUTTAZZI (Martedì o Mercoledì)
+    try:
+        giorno_num = int(re.sub(r'\D', '', str(nome_foglio_giorno)))
+        # Assumiamo un calcolo indicativo sul giorno della settimana del mese
+        # Se il giorno del foglio corrisponde a un Martedì o Mercoledì
+        # (Se applicabile al mese di riferimento)
+        data_rif = datetime.date(2026, 10, giorno_num)
+        giorno_sett = data_rif.weekday() # 1 = Martedì, 2 = Mercoledì
+        
+        if giorno_sett in [1, 2]: # Martedì o Mercoledì
+            for op_pc in ["MOLINI", "BUTTAZZI"]:
+                # Cerca l'operatore nell'anagrafica completa
+                op_match = next((op for op in GRUPPO_A_REALE + GRUPPO_B_REALE if op_pc in op), None)
+                if op_match and op_match not in assenti:
+                    turno_pc = "MATTINA" if op_match in squadra_mattina else "POMERIGGIO"
+                    orario_pc = "07:30" if turno_pc == "MATTINA" else "13:30"
+                    
+                    if not any(item[0] == op_match for item in servizi_speciali_assegnati):
+                        servizi_speciali_assegnati.append((op_match, "Servizio Protezione Civile", orario_pc, turno_pc))
+                        if turno_pc == "MATTINA":
+                            op_impegnati_mattina.add(op_match)
+                        else:
+                            op_impegnati_pomeriggio.add(op_match)
+    except Exception:
+        pass
+
+    # 6. REGOLA NOTTE DOMANI -> SPOSTA IN MATTINA OGGI
     try:
         giorno_num = int(re.sub(r'\D', '', str(nome_foglio_giorno)))
         giorno_succ_str = str(giorno_num + 1)
@@ -310,7 +335,7 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
     except Exception:
         pass
 
-    # 6. REGOLA SERA/NOTTE IERI (>= 18:00) -> SPOSTA IN POMERIGGIO OGGI (RIPOSO DI LEGGE)
+    # 7. REGOLA SERA/NOTTE IERI (>= 18:00) -> SPOSTA IN POMERIGGIO OGGI
     try:
         giorno_num = int(re.sub(r'\D', '', str(nome_foglio_giorno)))
         if giorno_num > 1:
