@@ -199,8 +199,7 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
     reperibili_b = []
     richieste_particolari = []
     
-    op_impegnati_mattina = set()
-    op_impegnati_pomeriggio = set()
+    op_impegnati = set() # Set universale per tracciare gli operatori con servizi speciali del giorno
     
     num_righe, num_colonne = matrice_giorno.shape
 
@@ -258,7 +257,7 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
                             if not any(item[0] == match_op for item in richieste_particolari):
                                 richieste_particolari.append((match_op, nota_testo))
 
-    # 4. Scansione Servizi Particolari
+    # 4. Scansione Servizi Particolari / Comandati (Stadio, Tutor, Mercato, Notte, ecc.)
     servizio_corrente = ""
     orario_corrente = ""
 
@@ -290,23 +289,16 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
             
             if not any(item[0] == operatore_effettivo for item in servizi_speciali_assegnati):
                 servizi_speciali_assegnati.append((operatore_effettivo, desc_servizio, orario_effettivo, turno_op))
-                if turno_op == "MATTINA":
-                    op_impegnati_mattina.add(operatore_effettivo)
-                else:
-                    op_impegnati_pomeriggio.add(operatore_effettivo)
+                op_impegnati.add(operatore_effettivo) # ESCLUSIONE immediata dai disponibili diurni
 
     # 5. REGOLA SPECIALE PROTEZIONE CIVILE PER MOLINI E BUTTAZZI (Martedì o Mercoledì)
     try:
         giorno_num = int(re.sub(r'\D', '', str(nome_foglio_giorno)))
-        # Assumiamo un calcolo indicativo sul giorno della settimana del mese
-        # Se il giorno del foglio corrisponde a un Martedì o Mercoledì
-        # (Se applicabile al mese di riferimento)
         data_rif = datetime.date(2026, 10, giorno_num)
         giorno_sett = data_rif.weekday() # 1 = Martedì, 2 = Mercoledì
         
-        if giorno_sett in [1, 2]: # Martedì o Mercoledì
+        if giorno_sett in [1, 2]:
             for op_pc in ["MOLINI", "BUTTAZZI"]:
-                # Cerca l'operatore nell'anagrafica completa
                 op_match = next((op for op in GRUPPO_A_REALE + GRUPPO_B_REALE if op_pc in op), None)
                 if op_match and op_match not in assenti:
                     turno_pc = "MATTINA" if op_match in squadra_mattina else "POMERIGGIO"
@@ -314,28 +306,30 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
                     
                     if not any(item[0] == op_match for item in servizi_speciali_assegnati):
                         servizi_speciali_assegnati.append((op_match, "Servizio Protezione Civile", orario_pc, turno_pc))
-                        if turno_pc == "MATTINA":
-                            op_impegnati_mattina.add(op_match)
-                        else:
-                            op_impegnati_pomeriggio.add(op_match)
+                        op_impegnati.add(op_match)
     except Exception:
         pass
 
-    # 6. REGOLA NOTTE DOMANI -> SPOSTA IN MATTINA OGGI
+    # 6. REGOLA NOTTE OGGI -> ESCLUSIONE DALLO STESSO GIORNO
+    ops_notte_oggi, _ = ottieni_operatori_serali_notturni_giorno(percorso_ods, nome_foglio_giorno)
+    for op in ops_notte_oggi:
+        op_impegnati.add(op) # Garantisce che chi fa Notte OGGI non sia MAI nei disponibili diurni
+
+    # 7. REGOLA NOTTE DOMANI -> SPOSTA IN MATTINA OGGI
     try:
         giorno_num = int(re.sub(r'\D', '', str(nome_foglio_giorno)))
         giorno_succ_str = str(giorno_num + 1)
         ops_notte_domani, _ = ottieni_operatori_serali_notturni_giorno(percorso_ods, giorno_succ_str)
         
         for op in ops_notte_domani:
-            if op in squadra_pomeriggio and op not in assenti and op not in op_impegnati_pomeriggio:
+            if op in squadra_pomeriggio and op not in assenti and op not in op_impegnati:
                 squadra_pomeriggio.remove(op)
                 if op not in squadra_mattina:
                     squadra_mattina.append(op)
     except Exception:
         pass
 
-    # 7. REGOLA SERA/NOTTE IERI (>= 18:00) -> SPOSTA IN POMERIGGIO OGGI
+    # 8. REGOLA SERA/NOTTE IERI (>= 18:00) -> SPOSTA IN POMERIGGIO OGGI (RIPOSO DI LEGGE)
     try:
         giorno_num = int(re.sub(r'\D', '', str(nome_foglio_giorno)))
         if giorno_num > 1:
@@ -343,15 +337,16 @@ def estrai_dati_giorno(percorso_ods, nome_foglio_giorno):
             _, ops_sera_ieri = ottieni_operatori_serali_notturni_giorno(percorso_ods, giorno_prec_str)
             
             for op in ops_sera_ieri:
-                if op in squadra_mattina and op not in assenti and op not in op_impegnati_mattina:
+                if op in squadra_mattina and op not in assenti and op not in op_impegnati:
                     squadra_mattina.remove(op)
                     if op not in squadra_pomeriggio:
                         squadra_pomeriggio.append(op)
     except Exception:
         pass
 
-    disp_mattina = [op for op in squadra_mattina if op not in assenti and op not in OPERATORI_ESCLUSI_SEMPRE and op not in op_impegnati_mattina]
-    disp_pomeriggio = [op for op in squadra_pomeriggio if op not in assenti and op not in OPERATORI_ESCLUSI_SEMPRE and op not in op_impegnati_pomeriggio]
+    # ESCLUSIONE RIGIDA: Tutti gli operatori in op_impegnati (inclusi quelli di Notte) vengono TOLTI dai disponibili ordinari
+    disp_mattina = [op for op in squadra_mattina if op not in assenti and op not in OPERATORI_ESCLUSI_SEMPRE and op not in op_impegnati]
+    disp_pomeriggio = [op for op in squadra_pomeriggio if op not in assenti and op not in OPERATORI_ESCLUSI_SEMPRE and op not in op_impegnati]
 
     spec_m = [item for item in servizi_speciali_assegnati if item[3] == "MATTINA"]
     spec_p = [item for item in servizi_speciali_assegnati if item[3] == "POMERIGGIO"]
