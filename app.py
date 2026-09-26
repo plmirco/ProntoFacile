@@ -23,7 +23,6 @@ if "df_stadera_attuale" not in st.session_state:
     st.session_state["df_stadera_attuale"] = crea_stadera_vuota()
 
 if "storico_registro_pi" not in st.session_state:
-    # DataFrame per memorizzare lo storico dettagliato con date
     st.session_state["storico_registro_pi"] = pd.DataFrame(
         columns=["GIORNO", "TURNO", "ORARIO", "OPERATORE_1", "OPERATORE_2", "SERVIZIO"]
     )
@@ -52,8 +51,16 @@ file_ods = st.sidebar.file_uploader("1. Carica il file .ods dei turni", type=["o
 file_stadera = st.sidebar.file_uploader("2. Carica la Stadera (.csv) [Opzionale]", type=["csv"])
 
 if file_stadera is not None:
-    st.session_state["df_stadera_attuale"] = pd.read_csv(file_stadera)
-    st.sidebar.success("Stadera caricata correttamente!")
+    try:
+        # Tenta la lettura sia con punto e virgola che con virgola per massima compatibilità
+        try:
+            st.session_state["df_stadera_attuale"] = pd.read_csv(file_stadera, sep=';')
+        except Exception:
+            file_stadera.seek(0)
+            st.session_state["df_stadera_attuale"] = pd.read_csv(file_stadera, sep=',')
+        st.sidebar.success("Stadera caricata e incolonnata correttamente!")
+    except Exception as e:
+        st.sidebar.error(f"Errore nella lettura del file CSV: {e}")
 
 if file_ods is not None:
     with tempfile.NamedTemporaryFile(delete=False, suffix=".ods") as tmp_file:
@@ -202,7 +209,7 @@ if file_ods is not None:
                         op2 = comps[1] if len(comps) > 1 else ""
                         nuove_righe.append({
                             "GIORNO": str(g_str), "TURNO": "MATTINA", "ORARIO": item["orario"],
-                            "OPERATORE_1": op1, "OPERATORE_2": op2, "SERVIZI": item["servizio"]
+                            "OPERATORE_1": op1, "OPERATORE_2": op2, "SERVIZIO": item["servizio"]
                         })
 
                     for item in pi_p:
@@ -211,7 +218,7 @@ if file_ods is not None:
                         op2 = comps[1] if len(comps) > 1 else ""
                         nuove_righe.append({
                             "GIORNO": str(g_str), "TURNO": "POMERIGGIO", "ORARIO": item["orario"],
-                            "OPERATORE_1": op1, "OPERATORE_2": op2, "SERVIZI": item["servizio"]
+                            "OPERATORE_1": op1, "OPERATORE_2": op2, "SERVIZIO": item["servizio"]
                         })
 
                     if nuove_righe:
@@ -283,7 +290,6 @@ if file_ods is not None:
         with col_sch2:
             reg_df = st.session_state["storico_registro_pi"]
             if op_selezionato != "Tutti gli Operatori":
-                # Filtra lo storico per il singolo operatore scelto
                 reg_filtrato = reg_df[(reg_df["OPERATORE_1"] == op_selezionato) | (reg_df["OPERATORE_2"] == op_selezionato)]
                 st.markdown(f"##### Date PI svolti da **{op_selezionato}** (Totale: {len(reg_filtrato)}):")
                 if not reg_filtrato.empty:
@@ -291,7 +297,7 @@ if file_ods is not None:
                 else:
                     st.caption("Nessun PI registrato per questo operatore nelle date generate.")
             else:
-                st.markdown("##### Registro completo di tutte le date generati:")
+                st.markdown("##### Registro completo di tutte le date generate:")
                 st.dataframe(reg_df, use_container_width=True)
 
         st.markdown("---")
@@ -302,17 +308,18 @@ if file_ods is not None:
 
         col_d1, col_d2 = st.columns(2)
         with col_d1:
-            csv_data = st.session_state["df_stadera_attuale"].to_csv(index=False).encode('utf-8')
+            # Esportazione ottimizzata per Excel italiano (sep=';' e utf-8-sig)
+            csv_data = st.session_state["df_stadera_attuale"].to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
             st.download_button(
-                label="📥 Scarica Stadera Aggiornata (.CSV)",
+                label="📥 Scarica Stadera Aggiornata (.CSV per Excel)",
                 data=csv_data,
                 file_name="stadera_pi.csv",
                 mime="text/csv"
             )
         with col_d2:
-            csv_storico = st.session_state["storico_registro_pi"].to_csv(index=False).encode('utf-8')
+            csv_storico = st.session_state["storico_registro_pi"].to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
             st.download_button(
-                label="📥 Scarica Registro Storico Date (.CSV)",
+                label="📥 Scarica Registro Storico Date (.CSV per Excel)",
                 data=csv_storico,
                 file_name="storico_date_pi.csv",
                 mime="text/csv"
