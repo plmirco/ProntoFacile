@@ -34,7 +34,7 @@ def ricalcola_stadera_da_storico():
     registro = st.session_state["storico_registro_pi"]
     
     for _, row in registro.iterrows():
-        orario = row["ORARIO"]
+        orario = str(row["ORARIO"]) if pd.notna(row["ORARIO"]) else ""
         col_orario = f"PI_{orario}" if f"PI_{orario}" in df_s.columns else None
         
         for op_col in ["OPERATORE_1", "OPERATORE_2"]:
@@ -48,7 +48,7 @@ def ricalcola_stadera_da_storico():
     st.session_state["df_stadera_attuale"] = df_s
 
 def esporta_excel(df):
-    """Esporta un DataFrame in formato Excel .xlsx multilivello/multicolonna."""
+    """Esporta un DataFrame in formato Excel .xlsx."""
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='Sheet1')
@@ -56,21 +56,29 @@ def esporta_excel(df):
 
 st.sidebar.header("📁 Caricamento File")
 file_ods = st.sidebar.file_uploader("1. Carica il file .ods dei turni", type=["ods"])
-file_stadera = st.sidebar.file_uploader("2. Carica la Stadera (.csv / .xlsx) [Opzionale]", type=["csv", "xlsx"])
+file_storico_o_stadera = st.sidebar.file_uploader("2. Carica Registro Date o Stadera (.xlsx / .csv)", type=["xlsx", "csv"])
 
-if file_stadera is not None:
+if file_storico_o_stadera is not None:
     try:
-        if file_stadera.name.endswith('.xlsx'):
-            st.session_state["df_stadera_attuale"] = pd.read_excel(file_stadera)
+        if file_storico_o_stadera.name.endswith('.xlsx'):
+            df_caricato = pd.read_excel(file_storico_o_stadera)
         else:
             try:
-                st.session_state["df_stadera_attuale"] = pd.read_csv(file_stadera, sep=';')
+                df_caricato = pd.read_csv(file_storico_o_stadera, sep=';')
             except Exception:
-                file_stadera.seek(0)
-                st.session_state["df_stadera_attuale"] = pd.read_csv(file_stadera, sep=',')
-        st.sidebar.success("Stadera caricata e incolonnata correttamente!")
+                file_storico_o_stadera.seek(0)
+                df_caricato = pd.read_csv(file_storico_o_stadera, sep=',')
+        
+        # Se il file caricato è il Registro Storico Date (contiene OPERATORE_1)
+        if "OPERATORE_1" in df_caricato.columns and "GIORNO" in df_caricato.columns:
+            st.session_state["storico_registro_pi"] = df_caricato
+            ricalcola_stadera_da_storico()
+            st.sidebar.success("Registro Date caricato e Stadera ricalcolata in automatico!")
+        else:
+            st.session_state["df_stadera_attuale"] = df_caricato
+            st.sidebar.success("Stadera caricata correttamente!")
     except Exception as e:
-        st.sidebar.error(f"Errore nella lettura del file Stadera: {e}")
+        st.sidebar.error(f"Errore nella lettura del file: {e}")
 
 if file_ods is not None:
     with tempfile.NamedTemporaryFile(delete=False, suffix=".ods") as tmp_file:
@@ -200,7 +208,6 @@ if file_ods is not None:
                 st.markdown("---")
 
                 if st.button(f"🎲 Genera PI Equi con Stadera (Giorno {g_str})", key=f"btn_{g_str}"):
-                    # Cancellazione preventiva dei dati precedenti per il giorno selezionato (evita duplicati)
                     df_reg = st.session_state["storico_registro_pi"]
                     df_reg = df_reg[df_reg["GIORNO"] != str(g_str)]
                     
@@ -211,7 +218,6 @@ if file_ods is not None:
                         disp_p, st.session_state["df_stadera_attuale"], "POMERIGGIO"
                     )
 
-                    # Registrazione analitica per lo storico date
                     nuove_righe = []
                     for item in pi_m:
                         comps = item["componenti"]
@@ -236,7 +242,6 @@ if file_ods is not None:
                             [df_reg, pd.DataFrame(nuove_righe)], ignore_index=True
                         )
 
-                    # Ricalcolo immediato della Stadera dallo storico pulito
                     ricalcola_stadera_da_storico()
 
                     st.subheader("🚨 Tabellone Giornaliero Generato")
@@ -290,7 +295,7 @@ if file_ods is not None:
 
         st.markdown("---")
 
-        # --- SEZIONE VISUALIZZAZIONE SCHEDA PERSONALE OPERATORE ED EDITH STORICO ---
+        # --- SEZIONE VISUALIZZAZIONE SCHEDA PERSONALE OPERATORE ED EDIT STORICO ---
         st.subheader("🗓️ Scheda Personale Operatore & Storico Date PI")
         st.markdown("Consulta l'elenco puntuale delle date svolte da ciascun operatore o modifica/elimina singole registrazioni.")
 
@@ -314,7 +319,6 @@ if file_ods is not None:
             else:
                 st.markdown("##### Registro Completo di tutte le date:")
                 
-                # Tabella editabile del Registro Storico Date
                 edited_registro = st.data_editor(
                     reg_df,
                     use_container_width=True,
@@ -322,7 +326,6 @@ if file_ods is not None:
                     key="editor_registro_date"
                 )
                 
-                # Se il registro viene modificato a mano, ricalcola automaticamente la Stadera
                 if not edited_registro.equals(st.session_state["storico_registro_pi"]):
                     st.session_state["storico_registro_pi"] = edited_registro
                     ricalcola_stadera_da_storico()
