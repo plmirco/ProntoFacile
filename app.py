@@ -10,16 +10,42 @@ from ods_reader import (
 )
 
 st.set_page_config(
-    page_title="Gestione Turni, PI e Stadera",
+    page_title="Gestione Turni, PI e Stadera Storica",
     page_icon="🚔",
     layout="wide"
 )
 
-st.title("🚔 Gestione Turni, Pronto Intervento e Stadera")
+st.title("🚔 Gestione Turni, Pronto Intervento e Registro Date PI")
 st.markdown("---")
 
+# Inizializzazione Session State per Stadera e Storico Date
 if "df_stadera_attuale" not in st.session_state:
     st.session_state["df_stadera_attuale"] = crea_stadera_vuota()
+
+if "storico_registro_pi" not in st.session_state:
+    # DataFrame per memorizzare lo storico dettagliato con date
+    st.session_state["storico_registro_pi"] = pd.DataFrame(
+        columns=["GIORNO", "TURNO", "ORARIO", "OPERATORE_1", "OPERATORE_2", "SERVIZIO"]
+    )
+
+def ricalcola_stadera_da_storico():
+    """Ricalcola la Stadera totale basandosi unicamente sulle righe presenti nel Registro Date."""
+    df_s = crea_stadera_vuota()
+    registro = st.session_state["storico_registro_pi"]
+    
+    for _, row in registro.iterrows():
+        orario = row["ORARIO"]
+        col_orario = f"PI_{orario}" if f"PI_{orario}" in df_s.columns else None
+        
+        for op_col in ["OPERATORE_1", "OPERATORE_2"]:
+            op = row[op_col]
+            if pd.notna(op) and op in df_s["OPERATORE"].values:
+                idx = df_s[df_s["OPERATORE"] == op].index[0]
+                df_s.loc[idx, "TOT_PI"] += 1
+                if col_orario:
+                    df_s.loc[idx, col_orario] += 1
+                    
+    st.session_state["df_stadera_attuale"] = df_s
 
 st.sidebar.header("📁 Caricamento File")
 file_ods = st.sidebar.file_uploader("1. Carica il file .ods dei turni", type=["ods"])
@@ -69,7 +95,7 @@ if file_ods is not None:
                 disp_m, disp_p, spec_m, spec_p, assenti, rep_a, rep_b, richieste_part = estrai_dati_giorno(percorso_tmp, g_str)
 
                 # --- SEZIONE OVERRIDE MANUALE ---
-                st.subheader("🔄 Modifica Manuale Turni Operatori")
+                st.subheader("🔄 Modifica Manuale Turni Operatori per la Generazione")
                 col_ov1, col_ov2 = st.columns(2)
                 tutti_ops = sorted(GRUPPO_A_REALE + GRUPPO_B_REALE)
                 
@@ -157,24 +183,56 @@ if file_ods is not None:
                 st.markdown("---")
 
                 if st.button(f"🎲 Genera PI Equi con Stadera (Giorno {g_str})", key=f"btn_{g_str}"):
-                    pi_m, alt_m, st.session_state["df_stadera_attuale"] = genera_coppie_pi_con_stadera(
+                    # Rimuove le vecchie registrazioni per questo giorno prima di sovrascrivere
+                    df_reg = st.session_state["storico_registro_pi"]
+                    df_reg = df_reg[df_reg["GIORNO"] != str(g_str)]
+                    
+                    pi_m, alt_m, _ = genera_coppie_pi_con_stadera(
                         disp_m, st.session_state["df_stadera_attuale"], "MATTINA"
                     )
-                    pi_p, alt_p, st.session_state["df_stadera_attuale"] = genera_coppie_pi_con_stadera(
+                    pi_p, alt_p, _ = genera_coppie_pi_con_stadera(
                         disp_p, st.session_state["df_stadera_attuale"], "POMERIGGIO"
                     )
 
-                    st.subheader("🚨 Tabellone Pronto Intervento Generato")
+                    # Inserimento nel Registro Date Storico
+                    nuove_righe = []
+                    for item in pi_m:
+                        comps = item["componenti"]
+                        op1 = comps[0] if len(comps) > 0 else ""
+                        op2 = comps[1] if len(comps) > 1 else ""
+                        nuove_righe.append({
+                            "GIORNO": str(g_str), "TURNO": "MATTINA", "ORARIO": item["orario"],
+                            "OPERATORE_1": op1, "OPERATORE_2": op2, "SERVIZI": item["servizio"]
+                        })
+
+                    for item in pi_p:
+                        comps = item["componenti"]
+                        op1 = comps[0] if len(comps) > 0 else ""
+                        op2 = comps[1] if len(comps) > 1 else ""
+                        nuove_righe.append({
+                            "GIORNO": str(g_str), "TURNO": "POMERIGGIO", "ORARIO": item["orario"],
+                            "OPERATORE_1": op1, "OPERATORE_2": op2, "SERVIZI": item["servizio"]
+                        })
+
+                    if nuove_righe:
+                        st.session_state["storico_registro_pi"] = pd.concat(
+                            [df_reg, pd.DataFrame(nuove_righe)], ignore_index=True
+                        )
+
+                    # Ricalcolo rigoroso ed equo della Stadera
+                    ricalcola_stadera_da_storico()
+
+                    st.subheader("🚨 Tabellone Giornaliero Generato")
                     c_m, c_p = st.columns(2)
 
                     with c_m:
-                        st.success("☀️ **PATTUGLIE MATTINA**")
+                        st.success("☀️ **PATTUGLIE E SERVIZI MATTINA**")
                         st.markdown("##### 🚨 Pronti Intervento (PI):")
                         if pi_m:
                             for item in pi_m:
                                 st.write(f"• **{item['servizio']}**: " + " - ".join(item["componenti"]))
                         else:
-                            st.caption("Nessun PI generato (operatori insufficienti).")
+                            st.caption("Nessun PI generato.")
 
                         st.markdown("##### 🚘 Altri Servizi / Territorio:")
                         if alt_m:
@@ -183,14 +241,21 @@ if file_ods is not None:
                         else:
                             st.caption("Nessuna pattuglia aggiuntiva.")
 
+                        st.markdown("##### 📌 Servizi Comandati / Speciali:")
+                        if spec_m:
+                            for op, serv, orario, _ in spec_m:
+                                st.write(f"• **{op}**: {serv} ({orario})")
+                        else:
+                            st.caption("Nessun servizio comandato.")
+
                     with c_p:
-                        st.info("🌆 **PATTUGLIE POMERIGGIO**")
+                        st.info("🌆 **PATTUGLIE E SERVIZI POMERIGGIO**")
                         st.markdown("##### 🚨 Pronti Intervento (PI):")
                         if pi_p:
                             for item in pi_p:
                                 st.write(f"• **{item['servizio']}**: " + " - ".join(item["componenti"]))
                         else:
-                            st.caption("Nessun PI generato (operatori insufficienti).")
+                            st.caption("Nessun PI generato.")
 
                         st.markdown("##### 🚘 Altri Servizi / Territorio:")
                         if alt_p:
@@ -199,17 +264,59 @@ if file_ods is not None:
                         else:
                             st.caption("Nessuna pattuglia aggiuntiva.")
 
+                        st.markdown("##### 📌 Servizi Comandati / Speciali:")
+                        if spec_p:
+                            for op, serv, orario, _ in spec_p:
+                                st.write(f"• **{op}**: {serv} ({orario})")
+                        else:
+                            st.caption("Nessun servizio comandato.")
+
         st.markdown("---")
+
+        # --- SEZIONE VISUALIZZAZIONE SCHEDA PERSONALE OPERATORE E DATE PI ---
+        st.subheader("🗓️ Scheda Personale Operatore & Storico Date PI")
+        col_sch1, col_sch2 = st.columns([3, 7])
+        
+        with col_sch1:
+            op_selezionato = st.selectbox("Seleziona Operatore per Storico Date:", ["Tutti gli Operatori"] + sorted(GRUPPO_A_REALE + GRUPPO_B_REALE))
+            
+        with col_sch2:
+            reg_df = st.session_state["storico_registro_pi"]
+            if op_selezionato != "Tutti gli Operatori":
+                # Filtra lo storico per il singolo operatore scelto
+                reg_filtrato = reg_df[(reg_df["OPERATORE_1"] == op_selezionato) | (reg_df["OPERATORE_2"] == op_selezionato)]
+                st.markdown(f"##### Date PI svolti da **{op_selezionato}** (Totale: {len(reg_filtrato)}):")
+                if not reg_filtrato.empty:
+                    st.dataframe(reg_filtrato, use_container_width=True)
+                else:
+                    st.caption("Nessun PI registrato per questo operatore nelle date generate.")
+            else:
+                st.markdown("##### Registro completo di tutte le date generati:")
+                st.dataframe(reg_df, use_container_width=True)
+
+        st.markdown("---")
+
+        # --- SEZIONE STADERA TOTALE ---
         st.subheader("📊 Stadera dei PI Aggiornata")
         st.dataframe(st.session_state["df_stadera_attuale"], use_container_width=True)
 
-        csv_data = st.session_state["df_stadera_attuale"].to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="📥 Scarica Stadera Aggiornata (.CSV)",
-            data=csv_data,
-            file_name="stadera_pi.csv",
-            mime="text/csv"
-        )
+        col_d1, col_d2 = st.columns(2)
+        with col_d1:
+            csv_data = st.session_state["df_stadera_attuale"].to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Scarica Stadera Aggiornata (.CSV)",
+                data=csv_data,
+                file_name="stadera_pi.csv",
+                mime="text/csv"
+            )
+        with col_d2:
+            csv_storico = st.session_state["storico_registro_pi"].to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Scarica Registro Storico Date (.CSV)",
+                data=csv_storico,
+                file_name="storico_date_pi.csv",
+                mime="text/csv"
+            )
 
     try:
         os.remove(percorso_tmp)
