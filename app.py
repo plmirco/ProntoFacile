@@ -19,7 +19,7 @@ st.set_page_config(
 st.title("🚔 Gestione Turni, Pronto Intervento e Registro Date PI")
 st.markdown("---")
 
-# Inizializzazione Session State per Stadera e Storico Date
+# Inizializzazione Session State per Stadera e Registro Date
 if "df_stadera_attuale" not in st.session_state:
     st.session_state["df_stadera_attuale"] = crea_stadera_vuota()
 
@@ -29,7 +29,7 @@ if "storico_registro_pi" not in st.session_state:
     )
 
 def ricalcola_stadera_da_storico():
-    """Ricalcola la Stadera totale basandosi unicamente sulle righe presenti nel Registro Date."""
+    """Ricalcola la Stadera totale basandosi unicamente sul Registro Date aggiornato."""
     df_s = crea_stadera_vuota()
     registro = st.session_state["storico_registro_pi"]
     
@@ -48,7 +48,7 @@ def ricalcola_stadera_da_storico():
     st.session_state["df_stadera_attuale"] = df_s
 
 def esporta_excel(df):
-    """Convertitore generico da DataFrame a file Excel (.xlsx) binario in memoria."""
+    """Esporta un DataFrame in formato Excel .xlsx multilivello/multicolonna."""
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='Sheet1')
@@ -200,6 +200,7 @@ if file_ods is not None:
                 st.markdown("---")
 
                 if st.button(f"🎲 Genera PI Equi con Stadera (Giorno {g_str})", key=f"btn_{g_str}"):
+                    # Cancellazione preventiva dei dati precedenti per il giorno selezionato (evita duplicati)
                     df_reg = st.session_state["storico_registro_pi"]
                     df_reg = df_reg[df_reg["GIORNO"] != str(g_str)]
                     
@@ -210,6 +211,7 @@ if file_ods is not None:
                         disp_p, st.session_state["df_stadera_attuale"], "POMERIGGIO"
                     )
 
+                    # Registrazione analitica per lo storico date
                     nuove_righe = []
                     for item in pi_m:
                         comps = item["componenti"]
@@ -234,6 +236,7 @@ if file_ods is not None:
                             [df_reg, pd.DataFrame(nuove_righe)], ignore_index=True
                         )
 
+                    # Ricalcolo immediato della Stadera dallo storico pulito
                     ricalcola_stadera_da_storico()
 
                     st.subheader("🚨 Tabellone Giornaliero Generato")
@@ -287,12 +290,17 @@ if file_ods is not None:
 
         st.markdown("---")
 
-        # --- SEZIONE VISUALIZZAZIONE SCHEDA PERSONALE OPERATORE E DATE PI ---
+        # --- SEZIONE VISUALIZZAZIONE SCHEDA PERSONALE OPERATORE ED EDITH STORICO ---
         st.subheader("🗓️ Scheda Personale Operatore & Storico Date PI")
+        st.markdown("Consulta l'elenco puntuale delle date svolte da ciascun operatore o modifica/elimina singole registrazioni.")
+
         col_sch1, col_sch2 = st.columns([3, 7])
         
         with col_sch1:
-            op_selezionato = st.selectbox("Seleziona Operatore per Storico Date:", ["Tutti gli Operatori"] + sorted(GRUPPO_A_REALE + GRUPPO_B_REALE))
+            op_selezionato = st.selectbox(
+                "Seleziona Operatore per Scheda Personale:", 
+                ["Tutti gli Operatori"] + sorted(GRUPPO_A_REALE + GRUPPO_B_REALE)
+            )
             
         with col_sch2:
             reg_df = st.session_state["storico_registro_pi"]
@@ -304,8 +312,21 @@ if file_ods is not None:
                 else:
                     st.caption("Nessun PI registrato per questo operatore nelle date generate.")
             else:
-                st.markdown("##### Registro completo di tutte le date generate:")
-                st.dataframe(reg_df, use_container_width=True)
+                st.markdown("##### Registro Completo di tutte le date:")
+                
+                # Tabella editabile del Registro Storico Date
+                edited_registro = st.data_editor(
+                    reg_df,
+                    use_container_width=True,
+                    num_rows="dynamic",
+                    key="editor_registro_date"
+                )
+                
+                # Se il registro viene modificato a mano, ricalcola automaticamente la Stadera
+                if not edited_registro.equals(st.session_state["storico_registro_pi"]):
+                    st.session_state["storico_registro_pi"] = edited_registro
+                    ricalcola_stadera_da_storico()
+                    st.success("Stadera ricalcolata in automatico a seguito delle modifiche nel Registro Date!")
 
         st.markdown("---")
 
