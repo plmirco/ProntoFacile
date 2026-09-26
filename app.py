@@ -3,6 +3,7 @@ import streamlit as st
 import os
 import tempfile
 import pandas as pd
+import io
 from ods_reader import (
     estrai_dati_giorno, carica_anagrafica_turni, 
     genera_coppie_pi_con_stadera, crea_stadera_vuota,
@@ -46,21 +47,30 @@ def ricalcola_stadera_da_storico():
                     
     st.session_state["df_stadera_attuale"] = df_s
 
+def esporta_excel(df):
+    """Convertitore generico da DataFrame a file Excel (.xlsx) binario in memoria."""
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Sheet1')
+    return buffer.getvalue()
+
 st.sidebar.header("📁 Caricamento File")
 file_ods = st.sidebar.file_uploader("1. Carica il file .ods dei turni", type=["ods"])
-file_stadera = st.sidebar.file_uploader("2. Carica la Stadera (.csv) [Opzionale]", type=["csv"])
+file_stadera = st.sidebar.file_uploader("2. Carica la Stadera (.csv / .xlsx) [Opzionale]", type=["csv", "xlsx"])
 
 if file_stadera is not None:
     try:
-        # Tenta la lettura sia con punto e virgola che con virgola per massima compatibilità
-        try:
-            st.session_state["df_stadera_attuale"] = pd.read_csv(file_stadera, sep=';')
-        except Exception:
-            file_stadera.seek(0)
-            st.session_state["df_stadera_attuale"] = pd.read_csv(file_stadera, sep=',')
+        if file_stadera.name.endswith('.xlsx'):
+            st.session_state["df_stadera_attuale"] = pd.read_excel(file_stadera)
+        else:
+            try:
+                st.session_state["df_stadera_attuale"] = pd.read_csv(file_stadera, sep=';')
+            except Exception:
+                file_stadera.seek(0)
+                st.session_state["df_stadera_attuale"] = pd.read_csv(file_stadera, sep=',')
         st.sidebar.success("Stadera caricata e incolonnata correttamente!")
     except Exception as e:
-        st.sidebar.error(f"Errore nella lettura del file CSV: {e}")
+        st.sidebar.error(f"Errore nella lettura del file Stadera: {e}")
 
 if file_ods is not None:
     with tempfile.NamedTemporaryFile(delete=False, suffix=".ods") as tmp_file:
@@ -190,7 +200,6 @@ if file_ods is not None:
                 st.markdown("---")
 
                 if st.button(f"🎲 Genera PI Equi con Stadera (Giorno {g_str})", key=f"btn_{g_str}"):
-                    # Rimuove le vecchie registrazioni per questo giorno prima di sovrascrivere
                     df_reg = st.session_state["storico_registro_pi"]
                     df_reg = df_reg[df_reg["GIORNO"] != str(g_str)]
                     
@@ -201,7 +210,6 @@ if file_ods is not None:
                         disp_p, st.session_state["df_stadera_attuale"], "POMERIGGIO"
                     )
 
-                    # Inserimento nel Registro Date Storico
                     nuove_righe = []
                     for item in pi_m:
                         comps = item["componenti"]
@@ -226,7 +234,6 @@ if file_ods is not None:
                             [df_reg, pd.DataFrame(nuove_righe)], ignore_index=True
                         )
 
-                    # Ricalcolo rigoroso ed equo della Stadera
                     ricalcola_stadera_da_storico()
 
                     st.subheader("🚨 Tabellone Giornaliero Generato")
@@ -302,27 +309,26 @@ if file_ods is not None:
 
         st.markdown("---")
 
-        # --- SEZIONE STADERA TOTALE ---
+        # --- SEZIONE STADERA TOTALE ED ESPORTAZIONE EXCEL (.XLSX) ---
         st.subheader("📊 Stadera dei PI Aggiornata")
         st.dataframe(st.session_state["df_stadera_attuale"], use_container_width=True)
 
         col_d1, col_d2 = st.columns(2)
         with col_d1:
-            # Esportazione ottimizzata per Excel italiano (sep=';' e utf-8-sig)
-            csv_data = st.session_state["df_stadera_attuale"].to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
+            excel_stadera = esporta_excel(st.session_state["df_stadera_attuale"])
             st.download_button(
-                label="📥 Scarica Stadera Aggiornata (.CSV per Excel)",
-                data=csv_data,
-                file_name="stadera_pi.csv",
-                mime="text/csv"
+                label="📊 Scarica Stadera Aggiornata (.XLSX Excel)",
+                data=excel_stadera,
+                file_name="stadera_pi.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         with col_d2:
-            csv_storico = st.session_state["storico_registro_pi"].to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
+            excel_storico = esporta_excel(st.session_state["storico_registro_pi"])
             st.download_button(
-                label="📥 Scarica Registro Storico Date (.CSV per Excel)",
-                data=csv_storico,
-                file_name="storico_date_pi.csv",
-                mime="text/csv"
+                label="🗓️ Scarica Registro Storico Date (.XLSX Excel)",
+                data=excel_storico,
+                file_name="storico_date_pi.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
     try:
